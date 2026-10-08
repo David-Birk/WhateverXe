@@ -20,7 +20,9 @@ python3 tools/test.py --donor /path/to/AppleIntelTGLGraphicsFramebuffer
 python3 tools/stage_root.py --baseline /path/to/qualified-root --build build --output /path/to/new-root
 ```
 
-The optional test donor must be the exact c004fc1a framebuffer. Build outputs include both kexts and a source/header manifest. `stage_root.py` validates the predecessor manifest, preserves Apple executables, and updates the framebuffer provider dependency. A live installation must also migrate any separately installed TGLLinkProbe dependency and rebuild its System KC.
+The optional test donor must be the exact c004fc1a framebuffer. Build outputs include both kexts and a source/header manifest. `stage_root.py` validates the predecessor manifest, preserves Apple executables, and updates the framebuffer provider dependency. Rebuild the target System KC after migrating the provider identity.
+
+The historical `TGLCPUMemoryProbe` and `TGLLinkProbe` kexts are diagnostic tools, not runtime dependencies of WhateverXe. The normal root payload excludes both. When migrating an older installation, remove separately installed probe bundles and exclude their identifiers from the rebuilt KC; removing files alone does not remove cached kexts. Verify normal driver loading after removal, since TGLLinkProbe previously triggered dependency loading. MI646 removal results and recovery assets are recorded in the enclosing project's Xe records; other machines require their own validation.
 
 Canonical switches include `-igfxadln`, `-adlnnative`, `-display13`, `-display13trace`, `-wxeoff`, `-wxedbg`, and `-wxebeta`. Existing `-igfxn97`/`-n97*` switches remain aliases; old WEG global switches are not WhateverXe switches. Physical PCI/revision and exact kernel/donor checks remain authoritative. DVMT keeps its established `-igfxdvmt`/device-property opt-in.
 
