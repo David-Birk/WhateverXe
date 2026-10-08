@@ -33,7 +33,7 @@ def main():
   symbols=subprocess.check_output(['xcrun','nm',str(exe)],text=True)
   assert ' _kmod_info' in symbols, 'missing kext lifecycle metadata'
   if name=='WhateverXe':
-   assert ' __realmain' in symbols and ' _start' in symbols
+   assert ' __realmain' in symbols and ' __start' in symbols
    unresolved=subprocess.check_output(['xcrun','nm','-u',str(exe)],text=True)
    assert not any(x in unresolved for x in ['__ZN2XE','__ZN6XeHost','__ZN11DVMTCalcFix']), 'unresolved local implementation'
   manifest[name]={'identifier':ident,'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'source_sha256':{str(s.relative_to(ROOT)) if s.is_relative_to(ROOT) else str(s):hashlib.sha256(s.read_bytes()).hexdigest() for s in sources}}
