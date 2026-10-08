@@ -41,7 +41,8 @@ PluginConfiguration ADDPR(config) {
 	}
 };
 
-// Match Xcode's kext lifecycle: libkmod's _start runs C++ initializers first.
+// Match Xcode's kext lifecycle. The kernel runs C++ initializers; libkmod
+// forwards the start/stop callbacks through _realmain and _antimain.
 extern "C" {
 extern kern_return_t _start(kmod_info_t *, void *);
 extern kern_return_t _stop(kmod_info_t *, void *);

@@ -22,12 +22,13 @@ void XeHost::init() {
 void XeHost::processKernel(KernelPatcher &patcher) {
  auto info=DeviceInfo::create();if(!info)return;
  auto gpu=OSDynamicCast(IOPCIDevice,info->videoBuiltin);
- active=gpu && XELP::identify(gpu->configRead32(0),gpu->configRead8(8)).admitted();
+ // Match WEG ordering: PCI config reads require a published IOPCIDevice.
+ const bool published=gpu && WIOKit::awaitPublishing(gpu);
+ active=published && XELP::identify(gpu->configRead32(0),gpu->configRead8(8)).admitted();
  if(active) {
   // Xe admission reads physical PCI identity. Do not install WEG's ID spoof hooks.
   if(info->firmwareVendor!=DeviceInfo::FirmwareVendor::Apple) {
    if(strcmp(gpu->getName(),"IGPU"))WIOKit::renameDevice(gpu,"IGPU");
-   WIOKit::awaitPublishing(gpu);
    if(!gpu->getProperty("built-in")){uint8_t value=0;gpu->setProperty("built-in",&value,1);}
    if(resetFramebuffer==FB_DETECT && !info->reportedFramebufferIsConnectorLess)resetFramebuffer=FB_COPY;
   }

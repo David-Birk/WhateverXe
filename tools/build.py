@@ -19,10 +19,15 @@ def main():
   objects=[]
   for source in sources:
    obj=objdir/(source.stem+'.o');cmd=base+['-DPRODUCT_NAME='+name,'-DMODULE_VERSION='+version]
+   if name=='WhateverXe':
+    # Preserve the known WEG/Lilu kernel C++ ABI. A modern deployment target
+    # introduces DriverKit vtable slots and userspace stack/fortify imports.
+    cmd=[x for x in cmd if x not in ['-mkernel','-mmacosx-version-min=10.15']]
+    cmd+=['-mmacosx-version-min=10.6','-DAPPLE_KEXT_ASSERTIONS=1','-DDRIVER_PRIVATE','-DAPPLE','-DNeXT','-fno-common','-fasm-blocks','-mmmx','-msse','-msse2','-msse3','-mssse3','-mfpmath=sse','-ftree-vectorize','-fno-non-call-exceptions']
    if not a.release:cmd+=['-DDEBUG=1']
    run(cmd+['-c',source,'-o',obj]);objects.append(obj)
   exe=bundle/'MacOS'/name
-  run(['xcrun','ld','-arch','x86_64','-kext','-undefined','dynamic_lookup','-no_fixup_chains','-macos_version_min','10.15','-o',exe,*objects,sdk/'Library/x86_64/libkmod.a'])
+  run(['xcrun','ld','-arch','x86_64','-kext','-undefined','dynamic_lookup','-no_fixup_chains','-macos_version_min',('10.6' if name=='WhateverXe' else '10.15'),'-o',exe,*objects,sdk/'Library/x86_64/libkmod.a'])
   libs={x:'10.0.0' for x in ['com.apple.kpi.bsd','com.apple.kpi.dsep','com.apple.kpi.iokit','com.apple.kpi.libkern','com.apple.kpi.mach','com.apple.kpi.unsupported']};libs['com.apple.iokit.IOPCIFamily']='1.1'
   ident='org.b00t0x.'+name
   info=dict(CFBundleIdentifier=ident,CFBundleExecutable=name,CFBundleName=name,CFBundlePackageType='KEXT',CFBundleVersion=version,CFBundleShortVersionString=version,OSBundleCompatibleVersion=version,OSBundleRequired='Root',OSBundleLibraries=libs)
@@ -35,6 +40,7 @@ def main():
   if name=='WhateverXe':
    assert ' __realmain' in symbols and ' __start' in symbols
    unresolved=subprocess.check_output(['xcrun','nm','-u',str(exe)],text=True)
+   assert not any(x in unresolved for x in ['chkstk_darwin','___memcpy_chk','___memmove_chk','DispatchE5IORPC']), 'userspace/DriverKit ABI imported into kernel plugin'
    assert not any(x in unresolved for x in ['__ZN2XE','__ZN6XeHost','__ZN11DVMTCalcFix']), 'unresolved local implementation'
   manifest[name]={'identifier':ident,'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'source_sha256':{str(s.relative_to(ROOT)) if s.is_relative_to(ROOT) else str(s):hashlib.sha256(s.read_bytes()).hexdigest() for s in sources}}
  manifest['headers']={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for d in ['WhateverXe','AppleIntelTGLCompat'] for p in sorted((ROOT/d).glob('*.hpp'))}
