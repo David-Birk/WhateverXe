@@ -76,7 +76,7 @@ Type-C transports are not implemented by this change.
 ## Native FIA adapter and diagnostics
 
 The exact-donor mode0/4 transaction uses the TGL port coordinate model for its
-FIA ready/ownership accesses. A powered provider mode4 probe, the existing mode
+FIA ready/ownership accesses. A successful provider mode4 probe, the existing mode
 mutex, the current thread/port and five matched native call sites are required.
 TC1/TC2 retain the original MMIO/AUX sequence. TC3/TC4 bank/bit mapping and sibling
 bit preservation are CPU-tested, not live-qualified. TC5/TC6, unavailable-register
@@ -92,3 +92,18 @@ word12 is physical DDI, word13 is schema1. The new `WhateverXeDPCD*` properties
 replace `TGLDPCD4*`. Optimal-lane records include DDI at qword11.
 The obsolete `-tglcrc`, `-tglholdfirstd3`, and `-tglcursorpte` experiments were
 removed; these switches no longer perform register/AUX/PTE writes.
+
+
+`WhateverXeTCControl3` through `WhateverXeTCControl8` are live, memory-only
+snapshots: four u32 words (schema1, physical DDI, all-event count, control count),
+then 64 ring slots of the existing 128-byte MEM1 AUX record. Timestamp and sequence
+identify valid records; event7 is provider entry/return, event8 mode-lock wait/
+acquisition, event9 parent-PG get return/put entry. Event1 and events5/6 retain mode
+and AUX boundaries. These snapshots do not require EDID-time publication and
+contain no register reads. Reading them does not establish hardware liveness.
+
+The provider probe currently assumes powered FIA access; registration does not
+prove TC-cold protection. The optional whole-boot `-tgltc-bootstrap` experiment
+is not a production lifetime fix. It did not prevent the observed MI646 reconnect
+hang after successful mode0-to-4 and subsequent AUX calls. Runtime hotplug is
+not yet qualified; do not infer it from normal startup or display sleep/wake.
