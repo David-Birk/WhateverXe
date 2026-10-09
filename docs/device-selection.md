@@ -117,3 +117,7 @@ donor's internal name. Dual FHD60/30-bit HDMI + fixed DP, Metal/OpenGL,
 hardware H.264/HEVC, and display sleep/wake with post-wake Metal passed.
 The existing 96 MiB DVMT setting was retained. This run did not repeat physical
 hotplug, cold boot or system sleep on the new pair.
+
+Afterward, the operator reported successful individual HDMI and DP unplug/replug
+on this pair. Internal hotplug transitions and post-hotplug counters were not
+collected during that check. Cold boot and system sleep remain untested here.
