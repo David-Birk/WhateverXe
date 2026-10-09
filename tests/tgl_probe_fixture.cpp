@@ -25,6 +25,7 @@ struct IORegistryEntry {
  static IORegistryEntry *getRegistryRoot() { static IORegistryEntry r;return &r; }
  template<class... T> void setProperty(T...) {}
 };
+void tglAUXRecord(void *,uint32_t,bool,uint32_t,uint32_t,uint32_t) {}
 uint32_t providerProbe(void *);
 struct XE {
  uint32_t tglModularProbed=0;

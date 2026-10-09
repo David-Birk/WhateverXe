@@ -15,7 +15,7 @@ struct XE {
 };
 XE object, *callbackXE = &object;
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
-void tglAUXRecord(void *,uint32_t,bool,uint32_t,uint32_t,uint32_t,uint32_t) {}
+void tglAUXRecord(void *,uint32_t,bool,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t=0) {}
 // AUX_WRAPPERS
 struct Power { alignas(8) uint8_t data[0x90] {}; } primary, other;
 uint32_t &native(void *p,unsigned ddi) { return *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(p)+0x54+4*ddi); }

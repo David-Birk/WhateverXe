@@ -2197,6 +2197,10 @@ static_assert(sizeof(TGLAUXRecord) == 128, "AUX observation schema");
 IOSimpleLock *tglAUXLock;
 TGLAUXRecord tglAUXFirst[9][256] {}, tglAUXLast[9][128] {};
 uint32_t tglAUXCounts[9] {};
+// Low-volume control boundaries survive bulk AUX traffic. The live serializer
+// copies software records only; it never enters native mode/power or MMIO.
+TGLAUXRecord tglAUXControl[9][64] {};
+uint32_t tglAUXControlCounts[9] {};
 
 // Independent and nested training calls retain their own suppression scope.
 // DPCD memory records remain enabled; only intrusive diagnostics are skipped.
@@ -2289,7 +2293,30 @@ void tglAUXRecord(void *port, uint32_t event, bool done, uint32_t result,
 	w[0] = ++tglAUXCounts[ddi];
 	if (w[0] <= 256) tglAUXFirst[ddi][w[0]-1] = record;
 	tglAUXLast[ddi][(w[0]-1) % 128] = record;
+ if(event==1 || event>=5) {
+  const auto control=++tglAUXControlCounts[ddi];
+  tglAUXControl[ddi][(control-1)%64]=record;
+ }
 	IOSimpleLockUnlock(tglAUXLock);
+}
+
+// Header: schema, DDI, all-event count, control-event count; then 64 records
+// in ring order. Existing MEM1 records carry timestamp/sequence and mode.
+// event7=provider probe, 8=mode-lock wait, 9=parent PG get/put boundary
+// (a=PG refs, b=AUX refs, header=extra refs, packet=1 get/0 put).
+static bool tglAUXControlSerialize(void *,void *reference,OSSerialize *serializer) {
+ const auto ddi=reinterpret_cast<uintptr_t>(reference);
+ if(ddi>=9 || !tglAUXLock)return false;
+ const size_t size=16+sizeof(tglAUXControl[0]);
+ auto copy=static_cast<uint8_t *>(IOMalloc(size));if(!copy)return false;
+ auto header=reinterpret_cast<uint32_t *>(copy);header[0]=1;header[1]=ddi;
+ IOSimpleLockLock(tglAUXLock);
+ header[2]=tglAUXCounts[ddi];header[3]=tglAUXControlCounts[ddi];
+ memcpy(copy+16,tglAUXControl[ddi],sizeof(tglAUXControl[0]));
+ IOSimpleLockUnlock(tglAUXLock);
+ auto data=OSData::withBytes(copy,size);IOFree(copy,size);
+ if(!data)return false;
+ const bool result=data->serialize(serializer);data->release();return result;
 }
 
 void tglAUXPublish() {
@@ -9399,6 +9426,12 @@ bool XE::tglLoadHDMIWiring(IOService *provider) {
 
 bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
  tglRecordStartOrder(3,that);
+ for(uintptr_t ddi=3;ddi<=8;++ddi) {
+  if(auto live=OSSerializer::forTarget(nullptr,tglAUXControlSerialize,reinterpret_cast<void *>(ddi))) {
+   char key[48];snprintf(key,sizeof(key),"WhateverXeTCControl%u",static_cast<unsigned>(ddi));
+   IORegistryEntry::getRegistryRoot()->setProperty(key,live);live->release();
+  }
+ }
  if(auto live=OSSerializer::forTarget(nullptr,tglStartOrderSerialize)) {
   IORegistryEntry::getRegistryRoot()->setProperty("TGLStartOrder",live);live->release();
  }
@@ -11340,9 +11373,11 @@ uint32_t XE::wrapTGLProbePort(void *port) {
 	tglConnectionRecord(port, 0, false, 0, 0, caller);
     // Keep observation in WEG; the provider is the sole mode implementation.
     // Binding is CPU-only and precedes the first probe's MMIO access.
+    tglAUXRecord(port,7,false,0,0,0);
     uint32_t mode=0;
     if(callbackXE->xelpBindProbe(callbackXE->tglObservationController))
         mode=reinterpret_cast<XELP::ProbePort>(callbackXE->xelpProviderProbe)(port);
+    tglAUXRecord(port,7,true,mode,0,0);
     // Register a fixed-DP backend only after the provider's powered mode4
     // probe. This is monotonic policy, NOT connection state or a power lease.
     // Never clear it at HPD-low: outstanding AUX refs must keep their puts.
@@ -11562,7 +11597,9 @@ uint32_t XE::wrapTGLSetPortMode(void *port, uint32_t mode) {
  if(!self->tglTCModeAllowed(traceDDI,mode))return kIOReturnNotReady;
  auto transitionLock=self->tglModeResultReady && traceDDI>=3 && traceDDI<=8 ? self->tglModeTransitionLock : nullptr;
  if(transitionLock) {
+  tglAUXRecord(port,8,false,0,mode,0);
   IORecursiveLockLock(transitionLock);
+  tglAUXRecord(port,8,true,0,mode,0);
   tglRecordNativeModeBinding(port,traceDDI,mode);
  }
  tglRecordStartOrder(10,port,traceDDI,mode,*reinterpret_cast<uint32_t *>(traceBytes+0x550));
@@ -11977,6 +12014,8 @@ void XE::wrapTGLEnableAUXPower(void *power, uint32_t ddi) {
 	if (hold) {
 		tglAUXRecord(port, 5, false, 0, *reinterpret_cast<uint32_t *>(bytes + 0x28), *reinterpret_cast<uint32_t *>(bytes + 0x54 + 4 * ddi), self->tglAUXParentRefs[ddi]);
 		reinterpret_cast<void (*)(void *, uint32_t)>(self->tglEnablePG)(power, 3);
+  tglAUXRecord(port,9,true,0,*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(power)+0x28),
+   *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(power)+0x54+4*ddi),self->tglAUXParentRefs[ddi],1);
 		++self->tglAUXParentRefs[ddi];
 	}
 	FunctionCast(wrapTGLEnableAUXPower, self->orgTGLEnableAUXPower)(power, ddi);
@@ -11999,6 +12038,8 @@ void XE::wrapTGLDisableAUXPower(void *power, uint32_t ddi) {
 	if (hold) {
 		if (release) {
 			--self->tglAUXParentRefs[ddi];
+  tglAUXRecord(port,9,false,0,*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(power)+0x28),
+   *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(power)+0x54+4*ddi),self->tglAUXParentRefs[ddi],0);
 			reinterpret_cast<void (*)(void *, uint32_t)>(self->tglDisablePG)(power, 3);
 		}
 		tglAUXRecord(port, 6, true, release ? 0 : 1, *reinterpret_cast<uint32_t *>(bytes + 0x28), *reinterpret_cast<uint32_t *>(bytes + 0x54 + 4 * ddi), self->tglAUXParentRefs[ddi]);
