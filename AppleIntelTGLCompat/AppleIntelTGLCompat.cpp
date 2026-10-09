@@ -230,7 +230,7 @@ extern "C" kern_return_t tglStart(kmod_info_t *, void *) {
     // This dependency is loaded only with the qualified TGL donor. Keep the
     // exact kernel and per-operation memory/ABI guards; no positive boot switch.
     int adln = 0;
-    adlnRequested=(PE_parse_boot_argn("-igfxadln", &adln, sizeof(adln)) || PE_parse_boot_argn("-igfxn97", &adln, sizeof(adln)));
+    adlnRequested=PE_parse_boot_argn("-wex-adln", &adln, sizeof(adln));
     hardwareEnabled=!adlnRequested;
     IOLog("AppleIntelTGLCompat: revision 0.4.0 started, TGL hardware=%u Display13 probe=%u\n", hardwareEnabled,adlnRequested);
     return KERN_SUCCESS;

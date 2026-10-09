@@ -64,7 +64,7 @@ void XeHost::wrapFramebufferInit(IOFramebuffer *fb) {
 		if (callbackHost->consoleBuffer)
 			lilu_os_memcpy(callbackHost->consoleBuffer, reinterpret_cast<uint8_t *>(info.v_baseaddr), info.v_rowbytes * info.v_height);
 		else
-			SYSLOG("wxe", "console buffer allocation failure");
+			SYSLOG("wex", "console buffer allocation failure");
 		// Even if we may succeed next time, it will be unreasonably dangerous
 		info.v_baseaddr = 0;
 	}
@@ -81,18 +81,18 @@ void XeHost::wrapFramebufferInit(IOFramebuffer *fb) {
 
 		if (fb->getCurrentDisplayMode(&mode, &depth) == kIOReturnSuccess &&
 			fb->getPixelInformation(mode, depth, kIOFBSystemAperture, &pixelInfo) == kIOReturnSuccess) {
-			DBGLOG("wxe", "fb info 1: %d:%d %u:%u:%u",
+			DBGLOG("wex", "fb info 1: %d:%d %u:%u:%u",
 				   mode, depth, pixelInfo.bytesPerRow, pixelInfo.bytesPerPlane, pixelInfo.bitsPerPixel);
-			DBGLOG("wxe", "fb info 2: %u:%u %s %u:%u:%u",
+			DBGLOG("wex", "fb info 2: %u:%u %s %u:%u:%u",
 				   pixelInfo.componentCount, pixelInfo.bitsPerComponent, pixelInfo.pixelFormat, pixelInfo.flags, pixelInfo.activeWidth, pixelInfo.activeHeight);
 
 			if (info.v_rowbytes != pixelInfo.bytesPerRow || info.v_width != pixelInfo.activeWidth ||
 				info.v_height != pixelInfo.activeHeight || info.v_depth != pixelInfo.bitsPerPixel) {
 				backCopy = zeroFill = false;
-				DBGLOG("wxe", "this display has different mode");
+				DBGLOG("wex", "this display has different mode");
 			}
 		} else {
-			DBGLOG("wxe", "failed to obtain display mode");
+			DBGLOG("wex", "failed to obtain display mode");
 			backCopy = zeroFill = false;
 		}
 	}
@@ -107,13 +107,13 @@ void XeHost::wrapFramebufferInit(IOFramebuffer *fb) {
 		auto src = reinterpret_cast<uint8_t *>(callbackHost->consoleBuffer);
 		auto dst = reinterpret_cast<uint8_t *>(FramebufferViewer::getVramMap(fb)->getVirtualAddress());
 		if (backCopy) {
-			DBGLOG("wxe", "attempting to copy...");
+			DBGLOG("wex", "attempting to copy...");
 			// Here you can actually draw at your will, but looks like only on Intel.
 			// On AMD you technically can draw too, but it happens for a very short while, and is not worth it.
 			lilu_os_memcpy(dst, src, info.v_rowbytes * info.v_height);
 		} else if (zeroFill) {
 			// On AMD we do a zero-fill to ensure no visual glitches.
-			DBGLOG("wxe", "doing zero-fill...");
+			DBGLOG("wex", "doing zero-fill...");
 			memset(dst, 0, info.v_rowbytes * info.v_height);
 		}
 	}

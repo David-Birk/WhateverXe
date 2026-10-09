@@ -8,7 +8,7 @@ The provider supplies missing methods for the exact Apple TGL donor; it is not a
 
 Upstream WhateverGreen copyright and BSD license are retained. See LICENSE.txt and docs/extraction-map.json. Lilu and MacKernelSDK are separate build dependencies, not vendored source.
 
-Legacy N97-prefixed IORegistry keys and boot argument aliases remain for existing collectors/configurations. Internal names distinguish Display13, AlderLakeN, XELP and TGL donor contracts. This does not qualify every GPU with those display generations.
+Legacy N97-prefixed IORegistry keys remain for existing collectors. Boot argument aliases have been removed. Internal names distinguish Display13, AlderLakeN, XELP and TGL donor contracts. This does not qualify every GPU with those display generations.
 
 ## Build and test
 
@@ -24,7 +24,7 @@ The optional test donor must be the exact c004fc1a framebuffer. Build outputs in
 
 The historical `TGLCPUMemoryProbe` and `TGLLinkProbe` kexts are diagnostic tools, not runtime dependencies of WhateverXe. The normal root payload excludes both. When migrating an older installation, remove separately installed probe bundles and exclude their identifiers from the rebuilt KC; removing files alone does not remove cached kexts. Verify normal driver loading after removal, since TGLLinkProbe previously triggered dependency loading. MI646 removal results and recovery assets are recorded in the enclosing project's Xe records; other machines require their own validation.
 
-Canonical switches include `-igfxadln`, `-adlnnative`, `-display13`, `-display13trace`, `-wxeoff`, `-wxedbg`, and `-wxebeta`. Existing `-igfxn97`/`-n97*` switches remain aliases; old WEG global switches are not WhateverXe switches. Physical PCI/revision and exact kernel/donor checks remain authoritative. DVMT keeps its established `-igfxdvmt`/device-property opt-in.
+All WhateverXe-owned boot switches use `wex`: plugin controls are `-wexoff`, `-wexdbg`, and `-wexbeta`; features include `-wex-adln`, `-wex-adln-native`, `-wex-display13`, and `-wex-nopanel`. Old names and N97 aliases are no longer accepted. See [the complete option and migration guide](docs/boot-arguments.md) before upgrading both kexts and the boot configuration. WEG-shared `-igfxdvmt`/`gfxrst=` and native Apple donor options retain their names. Physical PCI/revision and exact kernel/donor checks remain authoritative.
 
 Disable the Xe development WEG when enabling WhateverXe. This revision has no qualified WEG co-installation mode, including mixed-GPU configurations. Its boot framebuffer hook is global. Do not enable both and rely on load order.
 
@@ -42,7 +42,7 @@ was added. A subsequent physical unplug/replug of Combo B and then A, once each
 with the peer connected, preserved the peer display and restored both outputs
 and Metal without GPU/resource/power faults. This does not qualify all-output
 disconnect, repeated hotplug, H.264, system sleep or the third TC HDMI port;
-existing boot-argument aliases were retained.
+that historical run retained the old boot-argument aliases. The subsequent `wex` name migration is not yet live-qualified.
 
 ## Firmware connector defaults
 
@@ -79,7 +79,7 @@ the port for existing fixed-DP PHY/AUX fixes. Registration persists through
 disconnect to keep power gets/puts symmetric; it is neither connection state nor
 a power reference. Automatic ports reject mode2/3 (TBT/DP-alt). Diagnostics on
 the registry root are `WhateverXeTCDPCandidates` and `WhateverXeTCDPRegistered`
-(physical-DDI bitmasks). No CPU-to-board lookup is involved. `-tglnopanel` remains
+(physical-DDI bitmasks). No CPU-to-board lookup is involved. `-wex-nopanel` remains
 available. ROM scanning, automatic panel setup, DP++ protocol fallback and new
 Type-C transports are not implemented by this change.
 
@@ -113,7 +113,7 @@ and AUX boundaries. These snapshots do not require EDID-time publication and
 contain no register reads. Reading them does not establish hardware liveness.
 
 The provider probe currently assumes powered FIA access; registration does not
-prove TC-cold protection. The optional whole-boot `-tgltc-bootstrap` experiment
+prove TC-cold protection. The optional whole-boot `-wex-tc-bootstrap` experiment
 is not a production lifetime fix. It did not prevent the observed MI646 reconnect
 hang after successful mode0-to-4 and subsequent AUX calls in r7. The subsequent
 observer fix below passed one MI646 physical reconnect cycle with normal boot

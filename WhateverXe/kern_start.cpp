@@ -13,15 +13,15 @@
 static XeHost host;
 
 static const char *bootargOff[] {
-	"-wxeoff"
+	"-wexoff"
 };
 
 static const char *bootargDebug[] {
-	"-wxedbg"
+	"-wexdbg"
 };
 
 static const char *bootargBeta[] {
-	"-wxebeta"
+	"-wexbeta"
 };
 
 PluginConfiguration ADDPR(config) {

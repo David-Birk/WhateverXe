@@ -8,7 +8,6 @@
 //
 
 #include "kern_xe.hpp"
-#include "kern_boot_args.hpp"
 #include "kern_alderlake_n.hpp"
 #include "kern_xelp_memory_layout.hpp"
 #include "kern_alderlake_n_forcewake_irq.hpp"
@@ -463,7 +462,7 @@ static bool adlnNativeRCSProfileReady;
 static OSObject *adlnInitialRCSFactory(void *task,const void *params,uint8_t options) {
  const auto caller=reinterpret_cast<uintptr_t>(__builtin_return_address(0));
  const bool initial=caller==adlnInitialRCSCallers[0] || caller==adlnInitialRCSCallers[1];
- const bool runtime=(xeCheckKernelArgument("-adlnrcsnopocs") || xeCheckKernelArgument("-adlnrcsprofile")) && caller==adlnRuntimeRCSCaller;
+ const bool runtime=(checkKernelArgument("-wex-adln-rcs-no-pocs") || checkKernelArgument("-wex-adln-rcs-profile")) && caller==adlnRuntimeRCSCaller;
  if(initial && (reinterpret_cast<uintptr_t>(params)!=adlnInitialRCSParams || options!=2 ||
   !tglHost.owner || task!=Display13FBMemory::field<void *>(tglHost.owner,0x150)))
   PANIC("igfx","AlderLakeN initial RCS parameters/owner guard failed");
@@ -508,7 +507,7 @@ static __attribute__((noinline)) void adlnRunKernelContextTrial(IOService *owner
 static bool adlnKernelReuseCopy(void *context,void **image,void **posh) {
  const auto caller=reinterpret_cast<uintptr_t>(__builtin_return_address(0));
  bool result;
- if((xeCheckKernelArgument("-adlninitialnopocs") || xeCheckKernelArgument("-adlnrcsprofile")) && caller==adlnKernelReuseCopyCaller) {
+ if((checkKernelArgument("-wex-adln-initial-no-pocs") || checkKernelArgument("-wex-adln-rcs-profile")) && caller==adlnKernelReuseCopyCaller) {
   // Native copyContextImage unconditionally dereferences the POSH source.
   // At this exact caller, copy only the completed owned RCS image using the
   // same descriptor allocation contract. No fabricated POSH/golden contents.
@@ -574,7 +573,7 @@ static bool adlnKernelReuseCopy(void *context,void **image,void **posh) {
  } else result=FunctionCast(adlnKernelReuseCopy,adlnKernelReuseCopyOriginal)(context,image,posh);
  // Normal profile preserves native cleanup. It neither retains startup
  // contexts for a diagnostic nor injects another GPU request.
- if(xeCheckKernelArgument("-adlnrcsprofile"))return result;
+ if(checkKernelArgument("-wex-adln-rcs-profile"))return result;
  if(!adlnKernelReuseReady || caller!=adlnKernelReuseCopyCaller || !result)return result;
  auto q=adlnKernelReuseReceipt;q[1]=1;
  uint64_t owner=0,id=0,engine=0,descriptor=0,buffer=0,cpu=0,length=0;
@@ -592,7 +591,7 @@ static bool adlnKernelReuseCopy(void *context,void **image,void **posh) {
  adlnKernelReuseOwned=object;q[10]=1;adlnKernelReusePublish();
  // Stamp3 has completed before this exact native copy caller. The native
  // reference and our extra reference are both alive; later cleanup is intact.
- if(xeCheckKernelArgument("-adlnkernelearly"))adlnRunKernelContextTrial(static_cast<IOService *>(tglHost.owner));
+ if(checkKernelArgument("-wex-adln-kernel-early"))adlnRunKernelContextTrial(static_cast<IOService *>(tglHost.owner));
  return result;
 }
 static void adlnCaptureKernelWaitReturn(uint8_t *owner);
@@ -613,7 +612,7 @@ static __attribute__((noinline)) void adlnRunKernelContextTrial(IOService *owner
     !(Display13FBMemory::field<uint32_t>(owner,0xC78)&2)) {
   q[20]=1;adlnKernelContextPublish();return;
  }
- const bool reuseTrial=xeCheckKernelArgument("-adlnkernelreuse") && !xeCheckKernelArgument("-adlnkernelnewctx");
+ const bool reuseTrial=checkKernelArgument("-wex-adln-kernel-reuse") && !checkKernelArgument("-wex-adln-kernel-new-ctx");
  auto context=reuseTrial ? adlnKernelReuseOwned :
   reinterpret_cast<OSObject *(*)(void *,const void *,uint8_t)>(adlnKernelContextFactory)(
    reinterpret_cast<void *>(q[5]),reinterpret_cast<const void *>(adlnKernelContextParams),2);
@@ -632,10 +631,10 @@ static __attribute__((noinline)) void adlnRunKernelContextTrial(IOService *owner
   auto r=adlnKernelReuseReceipt;
   uint64_t stampBase=0,stampIndex=0,retired=0,control=0,descriptor=0;
   r[11]=context->getRetainCount();r[12]=q[7];
-  qualified=adlnKernelReuseReady && r[10]==1 && r[11]==(xeCheckKernelArgument("-adlnkernelearly")?2:1) && r[4]==q[7] &&
+  qualified=adlnKernelReuseReady && r[10]==1 && r[11]==(checkKernelArgument("-wex-adln-kernel-early")?2:1) && r[4]==q[7] &&
    r[3]==q[4] && Display13FBMemory::field<uint32_t>(context,0x7C)==1 &&
    tglVMRead(q[7]+0x89,descriptor) && descriptor==r[6] &&
-   tglVMRead(r[7]+0x100C,control) && uint32_t(control)==(xeCheckKernelArgument("-adlninitialnopocs")?0xFFFF0000:0xFFFF0010) &&
+   tglVMRead(r[7]+0x100C,control) && uint32_t(control)==(checkKernelArgument("-wex-adln-initial-no-pocs")?0xFFFF0000:0xFFFF0010) &&
    tglVMRead(q[10]+0x30,stampBase) && tglVMRead(q[10]+0x38,stampIndex) && uint32_t(stampIndex)<64 &&
    tglVMRead(stampBase+uint32_t(stampIndex)*64,retired) && uint32_t(retired)==3 &&
    Display13FBMemory::field<uint32_t>(reinterpret_cast<void *>(q[9]),0x178)==3;
@@ -648,8 +647,8 @@ static __attribute__((noinline)) void adlnRunKernelContextTrial(IOService *owner
  }
  q[8]=Display13FBMemory::field<uint32_t>(context,0x7C);
  q[3]=3;adlnKernelContextPublish();
- const bool gtWakeTrial=xeCheckKernelArgument("-adlnkernelwake");
- const bool renderWakeTrial=xeCheckKernelArgument("-adlnkernelrenderwake");
+ const bool gtWakeTrial=checkKernelArgument("-wex-adln-kernel-wake");
+ const bool renderWakeTrial=checkKernelArgument("-wex-adln-kernel-render-wake");
  const bool wakeTrial=gtWakeTrial || renderWakeTrial;
  const unsigned wakeDomain=renderWakeTrial ? 1 : 4;
  auto w=adlnKernelWakeReceipt;
@@ -680,13 +679,13 @@ static __attribute__((noinline)) void adlnRunKernelContextTrial(IOService *owner
    adlnKernelContextPublish();return;
   }
  }
-  if(xeCheckKernelArgument("-adlnkernelidlegap")) {
+  if(checkKernelArgument("-wex-adln-kernel-idle-gap")) {
   // Finite ordering contrast: observe retirement before the next LOAD,
   // using the already-held render lease. No context/register mutation.
   // The fresh no-POCS contrast also runs after original start returns, so
   // its native cleanup and golden-source mutations remain in the comparison.
-  const bool freshNoPOCS=xeCheckKernelArgument("-adlninitialnopocs") && xeCheckKernelArgument("-adlnkernelnewctx");
-  if((!reuseTrial && !freshNoPOCS) || (!xeCheckKernelArgument("-adlnkernelearly") && !freshNoPOCS) || !renderWakeTrial) {
+  const bool freshNoPOCS=checkKernelArgument("-wex-adln-initial-no-pocs") && checkKernelArgument("-wex-adln-kernel-new-ctx");
+  if((!reuseTrial && !freshNoPOCS) || (!checkKernelArgument("-wex-adln-kernel-early") && !freshNoPOCS) || !renderWakeTrial) {
    if(wakeTrial)wake(owner,false,wakeDomain);
    q[20]=6;adlnKernelContextPublish();return;
   }
@@ -739,7 +738,7 @@ static __attribute__((noinline)) void adlnRunKernelContextTrial(IOService *owner
    q[3]=6;
    // Retain the reuse/fresh-context diagnostic reference on success. Stamp
    // writeback precedes the final ring/CSB retirement; no early free here.
-   if(!reuseTrial && !xeCheckKernelArgument("-adlnkernelnewctx")) {context->release();adlnKernelContextOwned=nullptr;q[16]=0;q[21]=1;}
+   if(!reuseTrial && !checkKernelArgument("-wex-adln-kernel-new-ctx")) {context->release();adlnKernelContextOwned=nullptr;q[16]=0;q[21]=1;}
   }
  }
  clock_get_uptime(&ticks);absolutetime_to_nanoseconds(ticks,q+19);adlnKernelContextPublish();
@@ -754,8 +753,8 @@ static __attribute__((noinline)) void adlnPrepareRCSProfile(KernelPatcher &patch
   static const uint8_t glParams[] {0,0,0x0C,0,0,0,0,0,0,0,0,0};
   // The native GL caller uses RCS without POCS. Select its real factory
   // parameters for this one-shot comparison, never edit restore control.
-  const bool glProfile=xeCheckKernelArgument("-adlnkernelgl");
-  const bool normalProfile=xeCheckKernelArgument("-adlnrcsprofile");
+  const bool glProfile=checkKernelArgument("-wex-adln-kernel-gl");
+  const bool normalProfile=checkKernelArgument("-wex-adln-rcs-profile");
   static const uint8_t startup[] {0x49,0x8B,0xBD,0x50,1,0,0,0x48,0x8D,0x35,8,0xAC,8,0,0xBA,2,0,0,0,0xE8,0xD0,0x5B,5,0};
   static const char *symbols[] {"__ZN17IGHardwareContext11withOptionsEP11IGAccelTaskRK23IGHardwareContextParamsh",
    "__ZN18IGAccelFIFOChannel18submitStampCommandEv","__ZN20IGHardwareRingBuffer13sleepForStampEPjjj",
@@ -768,7 +767,7 @@ static __attribute__((noinline)) void adlnPrepareRCSProfile(KernelPatcher &patch
     !memcmp(reinterpret_cast<void *>(address+offsets[i]),heads[i],sizeof(factory));
   ready=ready && !memcmp(reinterpret_cast<void *>(address+0xB09A4),params,sizeof(params)) &&
    !memcmp(reinterpret_cast<void *>(address+0x25D8E),startup,sizeof(startup));
-  if(normalProfile || xeCheckKernelArgument("-adlnkernelwake") || xeCheckKernelArgument("-adlnkernelrenderwake")) {
+  if(normalProfile || checkKernelArgument("-wex-adln-kernel-wake") || checkKernelArgument("-wex-adln-kernel-render-wake")) {
    static const uint8_t wakeHead[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x50,0x85,0xD2};
    static const uint8_t gtCount[] {0x41,0xF6,0xC6,0x04,0x74,0x36};
    static const uint8_t renderCount[] {0x41,0xF6,0xC6,0x01,0x74,0x30,0x41,0x8B,0x85,0x90,0x12,0};
@@ -780,7 +779,7 @@ static __attribute__((noinline)) void adlnPrepareRCSProfile(KernelPatcher &patch
     !memcmp(reinterpret_cast<void *>(address+0x28DA1),wakeCall,sizeof(wakeCall));
    if(ready)adlnKernelContextWake=address+0x28C2A;
   }
-  const bool initialNoPOCS=normalProfile || xeCheckKernelArgument("-adlninitialnopocs");
+  const bool initialNoPOCS=normalProfile || checkKernelArgument("-wex-adln-initial-no-pocs");
   if(glProfile || initialNoPOCS) {
    static const uint8_t glCall[] {0x48,0x8D,0x35,0x27,0x56,0x05,0x00,0x48,0x89,0xC7,0xBA,0x02,0x00,0x00,0x00,0xE8,0x40,0x1C,0x01,0x00};
    ready=ready && size>0xBF35C &&
@@ -793,13 +792,13 @@ static __attribute__((noinline)) void adlnPrepareRCSProfile(KernelPatcher &patch
    static const uint8_t secondFactory[] {0x49,0x8B,0xBD,0x50,1,0,0,0x48,0x8D,0x35,0xE4,0xAB,8,0,0xBA,2,0,0,0,0xE8,0xAC,0x5B,5,0};
    static const uint8_t optionalRestore[] {0x41,0xF6,0x44,0x24,0x6E,0x10,0x74,0x31};
    static const uint8_t nativeAllocation[] {0xBE,0x23,0,0,0,0x4C,0x89,0xEA,0xE8};
-   ready=ready && (normalProfile || (xeCheckKernelArgument("-adlnkernelreuse") &&
-    (xeCheckKernelArgument("-adlnkernelearly") || xeCheckKernelArgument("-adlnkernelnewctx")) &&
-    xeCheckKernelArgument("-adlnkernelrenderwake") && xeCheckKernelArgument("-adlnkernelidlegap"))) && !glProfile &&
+   ready=ready && (normalProfile || (checkKernelArgument("-wex-adln-kernel-reuse") &&
+    (checkKernelArgument("-wex-adln-kernel-early") || checkKernelArgument("-wex-adln-kernel-new-ctx")) &&
+    checkKernelArgument("-wex-adln-kernel-render-wake") && checkKernelArgument("-wex-adln-kernel-idle-gap"))) && !glProfile &&
     !memcmp(reinterpret_cast<void *>(address+0x25DB2),secondFactory,sizeof(secondFactory)) &&
     !memcmp(reinterpret_cast<void *>(address+0x7C421),optionalRestore,sizeof(optionalRestore)) &&
     !memcmp(reinterpret_cast<void *>(address+0x7C7CE),nativeAllocation,sizeof(nativeAllocation));
-   if(normalProfile || xeCheckKernelArgument("-adlnrcsnopocs")) {
+   if(normalProfile || checkKernelArgument("-wex-adln-rcs-no-pocs")) {
     // Lazy native graphics queue creation uses a second, byte-identical
     // 1C0000 preset. With a no-POCS golden source, its contexts must use
     // the same native optional-POSH contract as the startup contexts.
@@ -817,12 +816,12 @@ static __attribute__((noinline)) void adlnPrepareRCSProfile(KernelPatcher &patch
    }
    IORegistryEntry::getRegistryRoot()->setProperty("N97InitialRCSNoPOCSReady",ready);
   }
-  if(normalProfile || xeCheckKernelArgument("-adlnkernelreuse")) {
+  if(normalProfile || checkKernelArgument("-wex-adln-kernel-reuse")) {
    const char *copy="__ZNK17IGHardwareContext16copyContextImageEPP24IOBufferMemoryDescriptorS2_";
    static const uint8_t copyHead[] {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x18};
    static const uint8_t copyCall[] {0x49,0x8d,0x95,0x70,0x12,0,0,0x4c,0x89,0xf7,0x4c,0x89,0xe6,0xe8,0x02,0x69,0x05,0};
    static const uint8_t releases[] {0x49,0x8b,0x06,0x4c,0x89,0xf7,0xff,0x50,0x28,0x49,0x8b,0x07,0x4c,0x89,0xff,0xff,0x50,0x28};
-   ready=ready && !glProfile && !xeCheckKernelArgument("-adlngoldenraw") &&
+   ready=ready && !glProfile && !checkKernelArgument("-wex-adln-golden-raw") &&
     patcher.solveSymbol<mach_vm_address_t>(index,copy,address,size)==address+0x7C762 &&
     !memcmp(reinterpret_cast<void *>(address+0x7C762),copyHead,sizeof(copyHead)) &&
     !memcmp(reinterpret_cast<void *>(address+0x25E4E),copyCall,sizeof(copyCall)) &&
@@ -838,13 +837,13 @@ static __attribute__((noinline)) void adlnPrepareRCSProfile(KernelPatcher &patch
     adlnKernelReusePublish();
    }
   }
-  if(xeCheckKernelArgument("-adlnkernelearly") && !xeCheckKernelArgument("-adlnkernelreuse"))ready=false;
-  if(xeCheckKernelArgument("-adlnkernelnewctx") && !initialNoPOCS)ready=false;
-  if(xeCheckKernelArgument("-adlnrcsnopocs") && !initialNoPOCS)ready=false;
+  if(checkKernelArgument("-wex-adln-kernel-early") && !checkKernelArgument("-wex-adln-kernel-reuse"))ready=false;
+  if(checkKernelArgument("-wex-adln-kernel-new-ctx") && !initialNoPOCS)ready=false;
+  if(checkKernelArgument("-wex-adln-rcs-no-pocs") && !initialNoPOCS)ready=false;
   if(normalProfile) {
    // Fail closed before native accelerator start if profile qualification
    // failed. A normal boot must not silently revert to the failing profile.
-   ready=ready && !xeCheckKernelArgument("-adlnkernelctx");
+   ready=ready && !checkKernelArgument("-wex-adln-kernel-ctx");
    adlnNativeRCSProfileReady=ready;
    IORegistryEntry::getRegistryRoot()->setProperty("N97NativeRCSProfileReady",ready);
    IORegistryEntry::getRegistryRoot()->setProperty("N97KernelContextTrialReady",false);
@@ -858,8 +857,8 @@ static __attribute__((noinline)) void adlnPrepareRCSProfile(KernelPatcher &patch
    IORegistryEntry::getRegistryRoot()->setProperty("N97KernelContextTrialParameters",
     reinterpret_cast<void *>(adlnKernelContextParams),sizeof(params));
   }
-  IORegistryEntry::getRegistryRoot()->setProperty("N97KernelContextTrialProfile",xeCheckKernelArgument("-adlnkernelnewctx")?"new-native-no-POCS-RCS":xeCheckKernelArgument("-adlnkernelreuse")?"retained-startup-RCS":glProfile?"native-GL-RCS":"native-graphics-RCS");
-  IORegistryEntry::getRegistryRoot()->setProperty("N97KernelContextTrialPlacement",xeCheckKernelArgument("-adlnkernelearly")?"startup-copy-return":"start-return");
+  IORegistryEntry::getRegistryRoot()->setProperty("N97KernelContextTrialProfile",checkKernelArgument("-wex-adln-kernel-new-ctx")?"new-native-no-POCS-RCS":checkKernelArgument("-wex-adln-kernel-reuse")?"retained-startup-RCS":glProfile?"native-GL-RCS":"native-graphics-RCS");
+  IORegistryEntry::getRegistryRoot()->setProperty("N97KernelContextTrialPlacement",checkKernelArgument("-wex-adln-kernel-early")?"startup-copy-return":"start-return");
   IORegistryEntry::getRegistryRoot()->setProperty("N97KernelContextTrialReady",ready);
 }
 // Two immutable read-only captures of the owned native golden source and
@@ -1334,7 +1333,7 @@ static void tglExecutionSample(unsigned slot,uint8_t *owner,unsigned domains,uns
  q[5]=descriptor;q[6]=__atomic_load_n(&tglExecutionStart,__ATOMIC_ACQUIRE);
  q[7]=domains;q[8]=client;q[9]=ack;q[10]=reinterpret_cast<uintptr_t>(current_thread());
  q[12]=kernelWaitReturn;
- q[13]=slot>=2 && xeCheckKernelArgument("-adlnkernelearly") && adlnKernelContextEntered;
+ q[13]=slot>=2 && checkKernelArgument("-wex-adln-kernel-early") && adlnKernelContextEntered;
  for(unsigned i=0;i<arrsize(tglExecutionRegs);++i)
   q[16+i]=*reinterpret_cast<volatile uint32_t *>(b+tglExecutionRegs[i]);
  tglHostClock(q+11);__atomic_store_n(&r.ready,1U,__ATOMIC_RELEASE);
@@ -2572,16 +2571,16 @@ void XE::init() {
 
 	// AlderLakeN is commonly booted with an ICL CPUID override. Select the isolated
 	// bring-up entry explicitly; processKernel still checks physical PCI first.
-	adlnRequested = (checkKernelArgument("-igfxadln") || checkKernelArgument("-igfxn97"));
+	adlnRequested = checkKernelArgument("-wex-adln");
 	if (adlnRequested) {
         modDVMTCalcFix.available=true;
 		adlnKernelReady = !strcmp(version, "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64");
 		if (!adlnKernelReady) SYSLOG("igfx", "AlderLakeN rejected: requires exact 20G1443 kernel");
 		// Framebuffer and accelerator have separate admission. Display13 hooks
 		// use a thin entry, never the TGL Display12 processKextFull frame.
-		adlnNativeRequested = adlnKernelReady && xeCheckKernelArgument("-adlnnative");
-		display13FramebufferRequested = adlnKernelReady && xeCheckKernelArgument("-display13");
-		display13TraceEnabled = display13FramebufferRequested && xeCheckKernelArgument("-display13trace");
+		adlnNativeRequested = adlnKernelReady && checkKernelArgument("-wex-adln-native");
+		display13FramebufferRequested = adlnKernelReady && checkKernelArgument("-wex-display13");
+		display13TraceEnabled = display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
 		if (display13FramebufferRequested) {
 			currentFramebuffer = &kextIntelTGLFb;
 			lilu.onKextLoadForce(&kextAppleIntelTGLCompat);
@@ -2598,14 +2597,14 @@ void XE::init() {
 	// TGL-U/UP4 use the qualified donor automatically. The explicit selector
 	// remains useful with CPUID spoofing; physical PCI and exact ABI guards follow.
 	const auto &tglCPU = BaseDeviceInfo::get();
-	tglRequested = !checkKernelArgument("-igfxtgloff") &&
-		(checkKernelArgument("-igfxtgl") || tglCPU.cpuModel == CPUInfo::CPU_MODEL_TIGERLAKE_U);
+	tglRequested = !checkKernelArgument("-wex-tgl-off") &&
+		(checkKernelArgument("-wex-tgl") || tglCPU.cpuModel == CPUInfo::CPU_MODEL_TIGERLAKE_U);
 	// Board input only: leave the donor panel intact unless explicitly absent.
-	tglNoPanel = checkKernelArgument("-tglnopanel");
+	tglNoPanel = checkKernelArgument("-wex-nopanel");
 	tglInactivePorts = tglRequested;
 	tglPG1Poll = tglRequested;
 	tglClockOrderRequested = tglRequested;
-	tglProgramEnabled = !checkKernelArgument("-tglprogoff");
+	tglProgramEnabled = !checkKernelArgument("-wex-tgl-prog-off");
 	tglAcceleratorRequested = tglRequested;
 	tglTrainingLeaseRequested = tglRequested;
 	if (tglRequested) {
@@ -2658,8 +2657,8 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97DisplayStep", "D0");
 	pci->setProperty("N97GGC", pci->configRead16(0x50), 32);
 	if (!(pci->configRead16(4) & 2)) return;
-	const bool linearTest = xeCheckKernelArgument("-display13");
-	const bool gtTest = xeCheckKernelArgument("-adlngt") || adlnNativeRequested;
+	const bool linearTest = checkKernelArgument("-wex-display13");
+	const bool gtTest = checkKernelArgument("-wex-adln-gt") || adlnNativeRequested;
 	auto map = pci->mapDeviceMemoryWithRegister(0x10,
 		(linearTest || gtTest ? 0 : kIOMapReadOnly) | kIOMapInhibitCache);
 	if (!map) return;
@@ -2716,7 +2715,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 		pci->setProperty("N97Display13After",&after,sizeof(after));
 		SYSLOG("igfx", "AlderLakeN Display13 linear status=%u pipe=%u writes=%u frames=%u..%u restored=%u",
 			static_cast<uint32_t>(linear.status),linear.pipe,linear.writes,linear.framesBefore,linear.framesAfter,linear.restored);
-		if (xeCheckKernelArgument("-adlnscanout")) {
+		if (checkKernelArgument("-wex-adln-scanout")) {
 			AlderLakeN::ScanoutResult scan;
 			uint64_t allocation[8] {}; // stage,buffer,IOReturn,count,length,offset,address,capacity
 			IOBufferMemoryDescriptor *buffers[2] {};
@@ -2834,7 +2833,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 				aperture && aperture->getLength()==0x10000000 && page_size==4096 &&
 				physicalOptions && (pci->configRead16(4)&6)==6 &&
 				checkKernelArgument("-allow3d") && checkKernelArgument("-disablegfxfirmware") &&
-				!xeCheckKernelArgument("-adlnscanout") && !xeCheckKernelArgument("-adlngpu");
+				!checkKernelArgument("-wex-adln-scanout") && !checkKernelArgument("-wex-adln-gpu");
 			pci->setProperty("N97NativePreflight",adlnNativeReady);
 			pci->setProperty("N97NativeReservedGGTT",prefix);
 			pci->setProperty("N97NativeEDRAM",edram,32);
@@ -2845,7 +2844,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 			static_cast<uint32_t>(gt.status),gt.requestedMask,gt.releasedMask,gt.releaseFailedMask,
 			gt.resources.eus,gt.resources.l3Banks);
 	}
-	if (gtTest && xeCheckKernelArgument("-adlngpu")) {
+	if (gtTest && checkKernelArgument("-wex-adln-gpu")) {
 		AlderLakeN::GPUResult gpu;
 		static IOBufferMemoryDescriptor *pinnedGPU=nullptr;
 		IOBufferMemoryDescriptor *buffer=nullptr;
@@ -3029,7 +3028,7 @@ bool XE::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t add
 		// Matching is persistent. A rejected bootstrap must not leave the
 		// original 46D1-incompatible donor probe reachable and panic before SSH.
 		if (!adlnNativeReady || !tglActive)return processAlderLakeNRejectedAccelerator(patcher,index,address,size);
-		if (xeCheckKernelArgument("-adlnloadonly"))
+		if (checkKernelArgument("-wex-adln-load-only"))
 			return processAlderLakeNLoadOnly(patcher, index, address, size);
 		return processTGLAccelerator(patcher, index, address, size);
 	}
@@ -3614,7 +3613,7 @@ bool XE::processDisplay13Framebuffer(KernelPatcher &patcher,size_t index,mach_vm
  // non-GuC frequency-query contract on TGL. Its native pmNotify is the same
  // Unsupported stub; preserve the caller's writer and actual hardware caps.
  const bool hostRPSRequested=adlnNativeRequested && checkKernelArgument("-disablegfxfirmware") &&
-  !checkKernelArgument("-tglnohostrps");
+  !checkKernelArgument("-wex-no-host-rps");
  bool hostRPSReady=false;
  if(hostRPSRequested)hostRPSReady=xelpInstallHostRPS(patcher,index,address,size);
  IORegistryEntry::getRegistryRoot()->setProperty("N97HostRPSRequested",hostRPSRequested);
@@ -7586,7 +7585,7 @@ bool XE::processAlderLakeNLoadOnly(KernelPatcher &patcher, size_t index, mach_vm
 	for (unsigned i=0;i<arrsize(load);++i)
 	 ready=ready && patcher.solveSymbol<mach_vm_address_t>(index,load[i].symbol,address,size)==address+offsets[i];
 	patcher.clearError();
-	const bool probeRequested=xeCheckKernelArgument("-adlnprobe");
+	const bool probeRequested=checkKernelArgument("-wex-adln-probe");
 	bool skuReady=!probeRequested;
 	if (ready && probeRequested && checkKernelArgument("-allow3d")) {
 	 // Admit the physical AlderLakeN ID into the donor's existing selector2 branch.
@@ -7611,7 +7610,7 @@ bool XE::processAlderLakeNLoadOnly(KernelPatcher &patcher, size_t index, mach_vm
 	}
 	ready=ready && skuReady;
 	ready=ready && patcher.routeMultiple(index,load,arrsize(load),address,size);
-	if (ready && xeCheckKernelArgument("-adlnparententry"))
+	if (ready && checkKernelArgument("-wex-adln-parent-entry"))
 	 ready=probeRequested && processAlderLakeNParentBoundary(patcher,index,address,size);
 	tglAcceleratorReady=ready;
 	IORegistryEntry::getRegistryRoot()->setProperty("N97LoadOnlyPatchReady",ready);
@@ -7631,15 +7630,15 @@ bool XE::processAlderLakeNParentBoundary(KernelPatcher &patcher, size_t index, m
 	 patcher.solveSymbol<mach_vm_address_t>(index,route.symbol,address,size)==address+0x28422;
 	patcher.clearError();
 	ready=ready && patcher.routeMultiple(index,&route,1,address,size);
-	if (ready && xeCheckKernelArgument("-adlnmemorystage"))
+	if (ready && checkKernelArgument("-wex-adln-memory-stage"))
 	 ready=processXELPMemoryStage(patcher,index,address,size);
-	if (ready && xeCheckKernelArgument("-adlnconfigstage"))
+	if (ready && checkKernelArgument("-wex-adln-config-stage"))
 	 ready=xelpMemoryStageReady && processAlderLakeNConfigStage(patcher,index,address,size);
-	if (ready && xeCheckKernelArgument("-adlneventstage"))
+	if (ready && checkKernelArgument("-wex-adln-event-stage"))
 	 ready=adlnConfigStageReady && processAlderLakeNEventStage(patcher,index,address,size);
-	if (ready && xeCheckKernelArgument("-adlndisplaystage"))
+	if (ready && checkKernelArgument("-wex-adln-display-stage"))
 	 ready=adlnEventStageReady && processDisplay13Stage(patcher,index,address,size);
-	if (ready && xeCheckKernelArgument("-adlntaskstage"))
+	if (ready && checkKernelArgument("-wex-adln-task-stage"))
 	 ready=display13StageReady && processAlderLakeNTaskBoundary(patcher,index,address,size);
 	adlnParentBoundaryReady=ready;
 	IORegistryEntry::getRegistryRoot()->setProperty("N97ParentBoundaryPatchReady",ready);
@@ -7796,7 +7795,7 @@ bool XE::processAlderLakeNTaskBoundary(KernelPatcher &patcher, size_t index, mac
 }
 
 bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
- if(adlnDetected && (xeCheckKernelArgument("-adlnkernelctx") || xeCheckKernelArgument("-adlnrcsprofile")))adlnPrepareRCSProfile(patcher,index,address,size);
+ if(adlnDetected && (checkKernelArgument("-wex-adln-kernel-ctx") || checkKernelArgument("-wex-adln-rcs-profile")))adlnPrepareRCSProfile(patcher,index,address,size);
    // Serialize only the two direct stores in detectEDRAM. The original
    // forcewake and 1000ms sleep remain outside the shared gate.
    {
@@ -8213,7 +8212,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				if (hostOK)
 					hostOK=installTGLCSB12(patcher,index,address,size);
 			}
-            if(adlnDetected && xeCheckKernelArgument("-adlnqtrace")) {
+            if(adlnDetected && checkKernelArgument("-wex-adln-qtrace")) {
              const char *create="__ZN19IGAccelCommandQueue29createHardwareContextIfNeededEh";
              const char *process="__ZN19IGAccelCommandQueue20processCommandBufferEjj";
              const char *pid="__ZNK19IOAccelCommandQueue16getOwningTaskPidEv";
@@ -8242,8 +8241,8 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
              patcher.clearError();adlnQueueTraceEnabled=ready;
              IORegistryEntry::getRegistryRoot()->setProperty("N97QueueTraceReady",ready);
             }
-			tglAlderLakeNContextPublishEnabled=adlnDetected && xeCheckKernelArgument("-adlnctxpublish") &&
-			 hostOK && tglVM.enabled && !xeCheckKernelArgument("-adlnkernelctx");
+			tglAlderLakeNContextPublishEnabled=adlnDetected && checkKernelArgument("-wex-adln-ctx-publish") &&
+			 hostOK && tglVM.enabled && !checkKernelArgument("-wex-adln-kernel-ctx");
 			IORegistryEntry::getRegistryRoot()->setProperty("N97ContextPublishReady",tglAlderLakeNContextPublishEnabled);
 			// r112 (qualified r108 correction): the wired descriptor pool consumes whole pages without rounding.
 			// TGL requests D240 bytes but writes through D210; ICL requests 9000.
@@ -8392,14 +8391,14 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			}
 			patcher.clearError();
 			IORegistryEntry::getRegistryRoot()->setProperty("TGLCPSColorPipeReady",cpsOK);
-            if(adlnDetected && xeCheckKernelArgument("-adlngoldensource")) {
-             adlnOwnedGoldenEnabled=cpsOK && !xeCheckKernelArgument("-adlnkernelctx") && !xeCheckKernelArgument("-adlngoldenraw");
+            if(adlnDetected && checkKernelArgument("-wex-adln-golden-source")) {
+             adlnOwnedGoldenEnabled=cpsOK && !checkKernelArgument("-wex-adln-kernel-ctx") && !checkKernelArgument("-wex-adln-golden-raw");
              IORegistryEntry::getRegistryRoot()->setProperty("N97OwnedGoldenReady",adlnOwnedGoldenEnabled);
              if(auto capture=OSSerializer::forTarget(nullptr,adlnOwnedGoldenSerialize)) {
               IORegistryEntry::getRegistryRoot()->setProperty("N97OwnedGoldenCapture",capture);capture->release();
              }
             }
-			if(adlnDetected && xeCheckKernelArgument("-adlngoldenraw")) {
+			if(adlnDetected && checkKernelArgument("-wex-adln-golden-raw")) {
 				const char *copy="__ZNK17IGHardwareContext16copyContextImageEPP24IOBufferMemoryDescriptorS2_";
 				const uint8_t head[] {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x18};
 				bool ok=cpsOK && patcher.solveSymbol<mach_vm_address_t>(index,copy,address,size)==address+0x7C762 &&
@@ -8560,7 +8559,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
    // Diagnostic A/B: omit only r285's host frequency callback; retain HiZ and GUI fixes.
    // Default behavior is unchanged. Remove the argument to restore frequency control.
    if(tglAcceleratorRequested && checkKernelArgument("-disablegfxfirmware") &&
-      !checkKernelArgument("-tglnohostrps")) {
+      !checkKernelArgument("-wex-no-host-rps")) {
     const bool ready=xelpInstallHostRPS(patcher,index,address,size);
     IORegistryEntry::getRegistryRoot()->setProperty("TGLHostRPSReady",ready);
     patcher.clearError();
@@ -9001,7 +9000,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 				patcher.clearError();
 			}
 			{
-    const bool auxTrial=checkKernelArgument("-tgltc-aux") && checkKernelArgument("-tgltc-bootstrap");
+    const bool auxTrial=checkKernelArgument("-wex-tc-aux") && checkKernelArgument("-wex-tc-bootstrap");
     const uint32_t offsets[] {0x1CC72,0x1CEB0,0x1D2B6};
     const char *names[] {"__ZN14AppleIntelPort7readAUXEjPvj","__ZN14AppleIntelPort8writeAUXEjPvj","__ZN14AppleIntelPort13runI2COverAUXENS_11AUX_CommandEPjjh"};
     const uint8_t entries[3][16] {{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec},{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec},{0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec}};
@@ -9253,7 +9252,7 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
     IORegistryEntry::getRegistryRoot()->setProperty("TGLTCNativeABIReady",f.complete());
     patcher.clearError();
    }
-   if(checkKernelArgument("-tgltc-bootstrap")) {
+   if(checkKernelArgument("-wex-tc-bootstrap")) {
     const uint8_t initBytes[] {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x18,0x48,0xff,0x05,0xe8,0x76,0x08,0x00},getBytes[] {0x55,0x48,0x89,0xe5,0x53,0x50,0x48,0x89,0xfb,0x48,0xff,0x05,0xac,0x5e,0x08,0x00,0x85,0xf6,0x74,0x18,0xb8,0x01,0x00,0x00},putBytes[] {0x55,0x48,0x89,0xe5,0x53,0x50,0x48,0x89,0xfb,0x48,0xff,0x05,0x5a,0x67,0x08,0x00,0x85,0xf6,0x74,0x23,0xb8,0x01,0x00,0x00};
     const auto init=patcher.solveSymbol<mach_vm_address_t>(index,"__ZN19AppleIntelPowerWell4initEP31AppleIntelFramebufferController",address,size);
     const bool known=size>0x5BEF4 && init==address+0x59F88 && tglEnablePG==address+0x5BEDC && tglDisablePG==address+0x5B366 &&
@@ -9502,18 +9501,18 @@ uint32_t XE::wrapTGLLaneMask(void *port) {
 }
 
 bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
- if (callbackXE->adlnDetected && xeCheckKernelArgument("-adlnrcsprofile") && !adlnNativeRCSProfileReady) {
+ if (callbackXE->adlnDetected && checkKernelArgument("-wex-adln-rcs-profile") && !adlnNativeRCSProfileReady) {
   SYSLOG("igfx", "AlderLakeN native RCS profile qualification rejected accelerator start");
   return false;
  }
- if (callbackXE->adlnDetected && xeCheckKernelArgument("-adlnloadonly")) {
+ if (callbackXE->adlnDetected && checkKernelArgument("-wex-adln-load-only")) {
   // No parent/native start, private-object reads, engine work or fake success.
   auto pci=OSDynamicCast(IOPCIDevice,provider);
   const bool admitted=callbackXE->tglAcceleratorReady && pci &&
    AlderLakeN::matches(pci->configRead32(0),pci->configRead8(8));
   IORegistryEntry::getRegistryRoot()->setProperty("N97LoadOnlyStartBlocked",true);
   IORegistryEntry::getRegistryRoot()->setProperty("N97LoadOnlyProviderReady",admitted);
-  if (admitted && callbackXE->adlnParentBoundaryReady && xeCheckKernelArgument("-adlnparententry"))
+  if (admitted && callbackXE->adlnParentBoundaryReady && checkKernelArgument("-wex-adln-parent-entry"))
    return startAlderLakeNParentBoundary(that,provider);
   return false;
  }
@@ -9614,7 +9613,7 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
 	tglObserveAccelerator(that, 2, true, result, reinterpret_cast<uintptr_t>(provider));
 	tglRecordStartOrder(6,that,9,0,0,result);
 	SYSLOG("igfx", "TGL accelerator start returned %d", result);
-	if(result && callbackXE->adlnDetected && xeCheckKernelArgument("-adlnkernelctx"))adlnRunKernelContextTrial(that);
+	if(result && callbackXE->adlnDetected && checkKernelArgument("-wex-adln-kernel-ctx"))adlnRunKernelContextTrial(that);
 	return result;
 }
 
@@ -9641,7 +9640,7 @@ bool XE::wrapAlderLakeNConfigureDevice(IOService *that, IOPCIDevice *provider) {
 	 root->setProperty("N97ParentStandalone",bytes[0x128C]==0);
 	 root->setProperty("N97ParentMemoryAbsent",!(*reinterpret_cast<const uintptr_t *>(bytes+0x1260)) &&
 	  !(*reinterpret_cast<const uintptr_t *>(bytes+0x1240)));
-	 if (xeCheckKernelArgument("-adlnmemorystage") && callbackXE->xelpMemoryStageReady)
+	 if (checkKernelArgument("-wex-adln-memory-stage") && callbackXE->xelpMemoryStageReady)
 	  return runXELPMemoryStage(that,provider);
 	}
 	root->setProperty("N97ConfigureDeviceBlocked",true);
@@ -9698,14 +9697,14 @@ bool XE::runXELPMemoryStage(IOService *that, IOPCIDevice *provider) {
 	 (caps[6]&0x1800)==0 && !(caps[6]&0x20); // FW mode is selected later by populateAccelConfig.
 	root->setProperty("N97MemoryNativeReady",nativeReady);
 	root->setProperty("N97MemoryStageReturned",true);
-	const bool allowConfig=nativeReady && callbackXE->adlnConfigStageReady && xeCheckKernelArgument("-adlnconfigstage");
+	const bool allowConfig=nativeReady && callbackXE->adlnConfigStageReady && checkKernelArgument("-wex-adln-config-stage");
 	root->setProperty("N97ConfigureDeviceBlocked",!allowConfig);
 	map->release();
 	return allowConfig; // With config-stage, the event factory remains blocked.
 }
 
 void *XE::wrapAlderLakeNNewEventMachine(IOService *that) {
-	if (!callbackXE->adlnDetected || !xeCheckKernelArgument("-adlnconfigstage"))
+	if (!callbackXE->adlnDetected || !checkKernelArgument("-wex-adln-config-stage"))
 	 return FunctionCast(wrapAlderLakeNNewEventMachine,callbackXE->orgAlderLakeNNewEventMachine)(that);
 	auto root=IORegistryEntry::getRegistryRoot();
 	root->setProperty("N97ConfigEventFactoryBlocked",true);
@@ -9721,7 +9720,7 @@ void *XE::wrapAlderLakeNNewEventMachine(IOService *that) {
 	 *reinterpret_cast<const uint32_t *>(a+0x1124)==callbackXE->adlnNativeEUs &&
      *reinterpret_cast<const uint32_t *>(a+0x1164)==callbackXE->adlnL3Banks;
 	root->setProperty("N97ConfigNativeReady",ready);
-	if (ready && callbackXE->adlnEventStageReady && xeCheckKernelArgument("-adlneventstage")) {
+	if (ready && callbackXE->adlnEventStageReady && checkKernelArgument("-wex-adln-event-stage")) {
 	 root->setProperty("N97ConfigEventFactoryBlocked",false);
 	 return FunctionCast(wrapAlderLakeNNewEventMachine,callbackXE->orgAlderLakeNNewEventMachine)(that);
 	}
@@ -9729,7 +9728,7 @@ void *XE::wrapAlderLakeNNewEventMachine(IOService *that) {
 }
 
 bool XE::wrapAlderLakeNEventInit(void *that, IOService *owner, uint32_t timeout, int stamps) {
-	if (!callbackXE->adlnDetected || !xeCheckKernelArgument("-adlneventstage"))
+	if (!callbackXE->adlnDetected || !checkKernelArgument("-wex-adln-event-stage"))
 	 return FunctionCast(wrapAlderLakeNEventInit,callbackXE->orgAlderLakeNEventInit)(that,owner,timeout,stamps);
 	auto root=IORegistryEntry::getRegistryRoot();
 	const bool admitted=callbackXE->adlnEventStageReady && owner==callbackXE->xelpMemoryStageOwner;
@@ -9744,7 +9743,7 @@ bool XE::wrapAlderLakeNEventInit(void *that, IOService *owner, uint32_t timeout,
 }
 
 void *XE::wrapAlderLakeNNewDisplayMachine(IOService *that) {
-	if (!callbackXE->adlnDetected || !xeCheckKernelArgument("-adlneventstage"))
+	if (!callbackXE->adlnDetected || !checkKernelArgument("-wex-adln-event-stage"))
 	 return FunctionCast(wrapAlderLakeNNewDisplayMachine,callbackXE->orgAlderLakeNNewDisplayMachine)(that);
 	auto root=IORegistryEntry::getRegistryRoot();
 	root->setProperty("N97EventDisplayFactoryBlocked",true);
@@ -9753,7 +9752,7 @@ void *XE::wrapAlderLakeNNewDisplayMachine(IOService *that) {
 	const bool ready=event && *reinterpret_cast<IOService *const *>(event+0x10)==that &&
 	 *reinterpret_cast<const uintptr_t *>(event+0x58) && *reinterpret_cast<const uintptr_t *>(event+0xD30) && !event[0xD88];
 	root->setProperty("N97EventNativeReady",ready);
-	if (ready && callbackXE->display13StageReady && xeCheckKernelArgument("-adlndisplaystage")) {
+	if (ready && callbackXE->display13StageReady && checkKernelArgument("-wex-adln-display-stage")) {
 	 root->setProperty("N97EventDisplayFactoryBlocked",false);
 	 return FunctionCast(wrapAlderLakeNNewDisplayMachine,callbackXE->orgAlderLakeNNewDisplayMachine)(that);
 	}
@@ -9761,7 +9760,7 @@ void *XE::wrapAlderLakeNNewDisplayMachine(IOService *that) {
 }
 
 void XE::wrapDisplay13Init(void *that, IOService *owner) {
-	if (!callbackXE->adlnDetected || !xeCheckKernelArgument("-adlndisplaystage")) {
+	if (!callbackXE->adlnDetected || !checkKernelArgument("-wex-adln-display-stage")) {
 	 FunctionCast(wrapDisplay13Init,callbackXE->orgDisplay13Init)(that,owner);
 	 return;
 	}
@@ -9778,11 +9777,11 @@ void XE::wrapDisplay13Init(void *that, IOService *owner) {
 }
 
 void *XE::wrapAlderLakeNNewStatistics(IOService *that) {
-	if (!callbackXE->adlnDetected || !xeCheckKernelArgument("-adlndisplaystage"))
+	if (!callbackXE->adlnDetected || !checkKernelArgument("-wex-adln-display-stage"))
 	 return FunctionCast(wrapAlderLakeNNewStatistics,callbackXE->orgAlderLakeNNewStatistics)(that);
 	auto root=IORegistryEntry::getRegistryRoot();
 	root->setProperty("N97DisplayStatisticsFactoryBlocked",true);
-	if (callbackXE->adlnTaskBoundaryReady && xeCheckKernelArgument("-adlntaskstage") &&
+	if (callbackXE->adlnTaskBoundaryReady && checkKernelArgument("-wex-adln-task-stage") &&
 	 callbackXE->xelpMemoryStageOwner==that) {
 	 root->setProperty("N97DisplayStatisticsFactoryBlocked",false);
 	 return FunctionCast(wrapAlderLakeNNewStatistics,callbackXE->orgAlderLakeNNewStatistics)(that);
@@ -9791,7 +9790,7 @@ void *XE::wrapAlderLakeNNewStatistics(IOService *that) {
 }
 
 void *XE::wrapAlderLakeNKernelTask(IOService *that) {
-	if (!callbackXE->adlnDetected || !xeCheckKernelArgument("-adlntaskstage"))
+	if (!callbackXE->adlnDetected || !checkKernelArgument("-wex-adln-task-stage"))
 	 return FunctionCast(wrapAlderLakeNKernelTask,callbackXE->orgAlderLakeNKernelTask)(that);
 	auto root=IORegistryEntry::getRegistryRoot();
 	root->setProperty("N97KernelTaskFactoryBlocked",true);
@@ -9900,7 +9899,7 @@ void XE::tglObserveAccelerator(IOService *that, uint32_t stage, bool done, uint6
 IOService *XE::wrapTGLAcceleratorProbe(IOService *that, IOService *provider, SInt32 *score) {
 	auto pci = OSDynamicCast(IOPCIDevice, provider);
 	const uint32_t identity = pci ? pci->configRead32(0) : 0;
-	if (callbackXE->adlnDetected && xeCheckKernelArgument("-adlnloadonly")) {
+	if (callbackXE->adlnDetected && checkKernelArgument("-wex-adln-load-only")) {
 		auto root=IORegistryEntry::getRegistryRoot();
 		const bool admitted=callbackXE->tglAcceleratorReady && pci &&
 			AlderLakeN::matches(identity,pci->configRead8(8));
@@ -9908,7 +9907,7 @@ IOService *XE::wrapTGLAcceleratorProbe(IOService *that, IOService *provider, SIn
 		if (!admitted) return nullptr;
 		// Qualify load/routing before executing the donor probe itself.
 		// Native start remains blocked even when this separate opt-in is used.
-		if (!xeCheckKernelArgument("-adlnprobe")) {
+		if (!checkKernelArgument("-wex-adln-probe")) {
 			root->setProperty("N97LoadOnlyProbeBlocked",true);
 			return nullptr;
 		}
@@ -10095,7 +10094,7 @@ bool XE::wrapTGLAcceleratorEngine(IOService *that) {
   that->setProperty("N97NativeAllocator",ranges,sizeof(ranges));
   that->setProperty("N97NativePreEngineReady",ready);
   tglObserveAccelerator(that,10,true,ready,uint64_t(caps[1])<<32|caps[4]);
-  if (xeCheckKernelArgument("-adlnparentonly")) {
+  if (checkKernelArgument("-wex-adln-parent-only")) {
    const bool irq=adlnNativeIRQPrerequisites(that,false);
    IORegistryEntry::getRegistryRoot()->setProperty("N97NativeParentOnlyReached",true);
    IORegistryEntry::getRegistryRoot()->setProperty("N97NativeParentOnlyReady",ready && irq);
@@ -10958,7 +10957,7 @@ void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
  uint32_t executionSlot=UINT32_MAX;
  if(renderWakeOwner && callbackXE->adlnDetected && n<arrsize(tglHost.submit)) {
   auto q=tglHost.submit[n].q;
-  const bool earlyTrial=xeCheckKernelArgument("-adlnkernelearly") && adlnKernelContextEntered && adlnKernelContextReceipt[3]>=3;
+  const bool earlyTrial=checkKernelArgument("-wex-adln-kernel-early") && adlnKernelContextEntered && adlnKernelContextReceipt[3]>=3;
   if(!tglHost.startupDone && !earlyTrial)executionSlot=0;
   else if(!__atomic_load_n(&tglExecutionStart,__ATOMIC_ACQUIRE)) {
    tglExecutionStreamer=reinterpret_cast<uintptr_t>(streamer);tglExecutionSubmit=n;
@@ -10986,7 +10985,7 @@ void XE::wrapTGLHostSubmit(void *streamer,uint32_t flags) {
   // submit-only bracket; not a production PM policy. Subsequent submits stay
   // balanced. The original path is unchanged without the explicit argument.
   static uint32_t retained;
-  const bool keep=checkKernelArgument("-tglholdrenderwake") &&
+  const bool keep=checkKernelArgument("-wex-tgl-hold-render-wake") &&
    __atomic_exchange_n(&retained,1U,__ATOMIC_RELAXED)==0;
   if (keep) IORegistryEntry::getRegistryRoot()->setProperty("TGLRenderWakeLifetimeTrial",309,32);
   else tglCSBForceWake[0](renderWakeOwner,false,1);
@@ -11864,7 +11863,7 @@ static bool tglBootstrapTrialSerialize(void *,void *,OSSerialize *serializer) {
  const bool ok=data->serialize(serializer);data->release();return ok;
 }
 void XE::tglBeginBootstrapTrial(void *controller) {
- if(!checkKernelArgument("-tgltc-bootstrap"))return;
+ if(!checkKernelArgument("-wex-tc-bootstrap"))return;
  tglBootstrapTrialRun(controller,callbackXE->tglPcodeNativeReady());
  if(callbackXE->tglBootstrapAUXReady && __atomic_load_n(&tglBootstrapTrial.stage,__ATOMIC_ACQUIRE)==2 &&
     tglBootstrapTrial.controller==controller && tglBootstrapTrial.lock && tglBootstrapTrial.record[4]==0) {
