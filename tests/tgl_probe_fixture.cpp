@@ -27,6 +27,7 @@ struct IORegistryEntry {
 };
 uint32_t providerProbe(void *);
 struct XE {
+ uint32_t tglModularProbed=0;
  bool tglActive=true;
  void *tglObservationController=nullptr;
  uintptr_t xelpProviderProbe=reinterpret_cast<uintptr_t>(providerProbe);

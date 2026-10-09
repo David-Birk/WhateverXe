@@ -1,4 +1,7 @@
 #include <cassert>
+#include "kern_tgl_native_fia.hpp"
+#include <thread>
+void *current_thread(){thread_local char token;return &token;}
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -21,8 +24,16 @@ struct IORegistryEntry {static IORegistryEntry *getRegistryRoot(){static IORegis
 void tglConnectionRecord(void*,unsigned,bool,uint32_t,uint32_t,void*){}
 void tglAUXRecord(void*,unsigned,bool,uint32_t,uint32_t,uint32_t){}
 struct XE {
+ bool tglTCModeAllowed(uint32_t,uint32_t)const{return true;}
  static void tglRecordStartOrder(unsigned,void*,unsigned=9,uint64_t=0,uint64_t=0,uint64_t=0){}
  static void tglRecordNativeModeBinding(void *,uint32_t,uint32_t) {}
+ TGLNativeFiaContext tglNativeFiaContext; bool tglNativeFiaReady=false; uint32_t tglModularProbed=0;
+ uintptr_t tglNativeFiaBase=0,orgTGLPortReadReg=0,orgTGLPortWriteReg=0;
+ uint32_t tglNativeFiaReads=0,tglNativeFiaWrites=0;
+ bool tglLegacyTCEligible(uint32_t ddi)const{return ddi>=3&&ddi<=6;}
+ static bool tglNativeFiaAccess(void*,uint32_t,uintptr_t,bool,TGLNativeFia&);
+ static uint32_t wrapTGLPortReadReg(void*,uint32_t);
+ static void wrapTGLPortWriteReg(void*,uint32_t,uint32_t);
  static uint32_t wrapTGLSetPortMode(void*,uint32_t);
  uintptr_t orgTGLSetPortMode{};IORecursiveLock *tglModeTransitionLock{};
  bool tglModeResultReady=true;uint32_t tglModeResultCorrections{},tglModeSerializedCalls{};

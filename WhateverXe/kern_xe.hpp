@@ -10,6 +10,7 @@
 
 #include "kern_tgl_tc_boot.hpp"
 #include "kern_tgl_tc_native.hpp"
+#include "kern_tgl_native_fia.hpp"
 #include "kern_tgl_hdmi_wiring.hpp"
 #include "kern_display13_hdmi_wiring.hpp"
 #include "kern_xelp_platform.hpp"
@@ -238,8 +239,6 @@ private:
 	static void wrapTGLGamma10(void *path, void *transaction, uint32_t control);
 	static void wrapTGLRegisterWrite(void *access, unsigned long reg, uint32_t value);
 	static void wrapTGLFastRegisterWrite(void *access, unsigned long reg, uint32_t value);
-	bool tglCRCRequested {false};
-	bool tglHoldFirstD3 {false};
 	bool tglInactivePorts {false};
 	bool tglPG1Poll {false};
 	bool tglClockOrderRequested {false};
@@ -248,16 +247,11 @@ private:
 	static void wrapTGLDisableClocks(void *controller, void *port, void *otherPort);
 	mach_vm_address_t tglPG1FuseReadCaller {};
 	mach_vm_address_t tglPortByIndex {};
-	uint32_t tglHeldD3 {};
 	mach_vm_address_t orgTGLCheckLinkStatus {};
 	static uint32_t wrapTGLCheckLinkStatus(void *port);
 	mach_vm_address_t orgTGLOptimalLaneCount {};
 	static uint32_t wrapTGLOptimalLaneCount(void *port, const void *timing, uint32_t bpp);
-	static void tglMeasureCRC(void *fb);
-	static void tglMeasureReceiverCRC(void *fb);
 	static void tglObserveCursorMemory(void *fb);
-	bool tglCursorPTERequested {false};
-	static void tglInstallCursorPTEs(void *controller);
 	mach_vm_address_t orgTGLCursorSetup {}, orgTGLRestoreGTT {}, orgTGLCursorImage {};
 	static uint32_t wrapTGLCursorSetup(void *controller);
 	static void wrapTGLRestoreGTT(void *controller);
@@ -602,6 +596,11 @@ private:
 	// Kept for the routed kext lifetime; distinct from path-pool/power locks.
 	IORecursiveLock *tglModeTransitionLock {};
 	uint32_t tglModeSerializedCalls {};
+ TGLNativeFiaContext tglNativeFiaContext;
+ bool tglNativeFiaReady {}; uint32_t tglModularProbed {},tglNativeFiaReads {},tglNativeFiaWrites {};
+ mach_vm_address_t tglNativeFiaBase {},orgTGLPortReadReg {};
+ static uint32_t wrapTGLPortReadReg(void *port,uint32_t reg);
+ static bool tglNativeFiaAccess(void *port,uint32_t reg,uintptr_t caller,bool write,TGLNativeFia &mapping);
 	bool tglModeResultReady {false};
 	uint32_t tglModeResultCorrections {};
 	static uint32_t wrapTGLSetPortMode(void *port, uint32_t mode);

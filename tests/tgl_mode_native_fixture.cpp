@@ -1,4 +1,7 @@
 #include <cassert>
+#include "kern_tgl_native_fia.hpp"
+#include <thread>
+void *current_thread(){thread_local char token;return &token;}
 #include <mutex>
 using IORecursiveLock=std::recursive_mutex;
 void IORecursiveLockLock(IORecursiveLock*p){p->lock();}
@@ -22,6 +25,13 @@ void tglAUXRecord(void*,unsigned,bool,uint32_t,uint32_t,uint32_t){}
 struct XE {
  static void tglRecordStartOrder(unsigned,void*,unsigned=9,uint64_t=0,uint64_t=0,uint64_t=0) {}
  static void tglRecordNativeModeBinding(void *,uint32_t,uint32_t) {}
+ TGLNativeFiaContext tglNativeFiaContext; bool tglNativeFiaReady=false; uint32_t tglModularProbed=0;
+ uintptr_t tglNativeFiaBase=0,orgTGLPortReadReg=0,orgTGLPortWriteReg=0;
+ uint32_t tglNativeFiaReads=0,tglNativeFiaWrites=0;
+ bool tglLegacyTCEligible(uint32_t ddi)const{return ddi>=3&&ddi<=6;}
+ static bool tglNativeFiaAccess(void*,uint32_t,uintptr_t,bool,TGLNativeFia&);
+ static uint32_t wrapTGLPortReadReg(void*,uint32_t);
+ static void wrapTGLPortWriteReg(void*,uint32_t,uint32_t);
  static uint32_t wrapTGLSetPortMode(void*,uint32_t);
  uintptr_t orgTGLSetPortMode {};
  bool automatic=false,registered=false;
@@ -30,17 +40,21 @@ struct XE {
  bool tglModeResultReady {true}; uint32_t tglModeResultCorrections {};
 };
 XE instance,*callbackXE=&instance;
+bool tglQuietTraining(){return true;}
 // PRODUCTION_WRAPPER
+// FIA_WRAPPERS
 alignas(8) uint8_t port[0x600],controller[0x1000];
 uint32_t config[8];
 unsigned powerGets,powerPuts,sleeps,reads,writes;
 uint32_t ready,owned,baseError;
+uint32_t ready2=0,owned2=0;
 uint32_t &mode(){return *reinterpret_cast<uint32_t*>(port+0x550);}
 uint32_t readReg(void *p,uint32_t r){
- assert(p==port);++reads;assert(r==0x163890 || r==0x163894);
+ assert(p==port);++reads;assert(r==0x163890 || r==0x163894 || r==0x16e890 || r==0x16e894);
+ if(r==0x16e890)return ready2;if(r==0x16e894)return owned2;
  return r==0x163890?ready:owned;
 }
-void writeReg(void *p,uint32_t r,uint32_t value){assert(p==port && r==0x163894);++writes;owned=value;}
+void writeReg(void *p,uint32_t r,uint32_t value){assert(p==port && (r==0x163894 || r==0x16e894));++writes;if(r==0x16e894)owned2=value;else owned=value;}
 void get(void *p){assert(p==port);++powerGets;}
 void put(void *p){assert(p==port);++powerPuts;assert(powerPuts<=powerGets);}
 void sleepMock(unsigned n){assert(n==1 || n==100);sleeps+=n;}
@@ -141,6 +155,44 @@ int main(int argc,char **argv){
  mapped.bank=1;mapped.ready=1;
  assert(TGLFia::waitLegacyReady(mapped,5).ok() && TGLFia::setOwned(mapped,5,true).ok());
  assert(mapped.ownership[0]==0x40000000 && mapped.ownership[1]==0x40000001 && mapped.ownership[2]==0x40000000);
+ // Replay the coordinate adapter through the actual native call sites.
+ IORecursiveLock lock;instance.tglModeTransitionLock=&lock;instance.tglNativeFiaReady=true;
+ instance.tglNativeFiaBase=reinterpret_cast<uintptr_t>(m);instance.tglModularProbed=0x78;
+ instance.orgTGLPortReadReg=reinterpret_cast<uintptr_t>(readReg);
+ instance.orgTGLPortWriteReg=reinterpret_cast<uintptr_t>(writeReg);
+ jump(m+0x1fe8e,reinterpret_cast<uintptr_t>(XE::wrapTGLPortReadReg));
+ jump(m+0x1fea8,reinterpret_cast<uintptr_t>(XE::wrapTGLPortWriteReg));
+ for(unsigned d=3;d<=6;++d){
+  const auto bit=1u<<((d-3)%2);reset(d,d<5?bit:0);ready2=d>=5?bit:0;
+  owned2=0x8000000e;const auto before=owned2;
+  assert(XE::wrapTGLSetPortMode(port,4)==0&&mode()==4&&powerGets==1&&powerPuts==0);
+  assert(d<5?owned==(0x40000000u|bit):owned==0x40000000u);
+  if(d>=5)assert(owned2==(before|bit));
+  assert(XE::wrapTGLSetPortMode(port,0)==0&&mode()==0&&powerGets==powerPuts);
+  assert(owned==0x40000000u);
+  if(d>=5)assert(owned2==((before|bit)&~bit));
+  assert(!instance.tglNativeFiaContext.owner);
+ }
+ // A direct register call, wrong caller/thread/port and nested unrelated
+ // scope must never inherit another transaction's FIA mapping.
+ TGLNativeFia mapping;
+ { TGLNativeFiaScope outer(instance.tglNativeFiaContext,reinterpret_cast<uintptr_t>(current_thread()),port,5,true);
+   assert(XE::tglNativeFiaAccess(port,0x163890,reinterpret_cast<uintptr_t>(m)+0x5feea,false,mapping));
+   assert(!XE::tglNativeFiaAccess(controller,0x163890,reinterpret_cast<uintptr_t>(m)+0x5feea,false,mapping));
+   assert(!XE::tglNativeFiaAccess(port,0x163890,reinterpret_cast<uintptr_t>(m)+0x5feeb,false,mapping));
+   assert(!instance.tglNativeFiaContext.matches(1,port));
+   ready=0x1234;assert(XE::wrapTGLPortReadReg(port,0x163890)==ready);
+   {TGLNativeFiaScope nested(instance.tglNativeFiaContext,reinterpret_cast<uintptr_t>(current_thread()),nullptr,5,true);
+    assert(!instance.tglNativeFiaContext.matches(reinterpret_cast<uintptr_t>(current_thread()),port));}
+   assert(instance.tglNativeFiaContext.matches(reinterpret_cast<uintptr_t>(current_thread()),port));
+ }
+ assert(!instance.tglNativeFiaContext.owner && instance.tglNativeFiaReads && instance.tglNativeFiaWrites);
+ // Missing probe qualification or mutex must leave the native FIA1 failure.
+ instance.tglModularProbed=0;reset(5,0);ready2=1;
+ assert(XE::wrapTGLSetPortMode(port,4)==kIOReturnNotReady && reads==100 && !writes);
+ instance.tglModularProbed=0x78;instance.tglModeTransitionLock=nullptr;reset(5,0);
+ assert(XE::wrapTGLSetPortMode(port,4)==kIOReturnNotReady && reads==100 && !writes);
+ puts("PASS qualified native FIA adapter: TC1/2 identity and TC3/4 modular bank/bit, sibling preservation, paired AUX, scoped caller guards");
  munmap(m,size);
  printf("PASS: %u real native mode transitions plus error/guard/non-TC controls; timeout returns 0 with mode0 before repair, NotReady after; native power/read/write/wait sequence retained\n",cases);
  std::puts("Mapped primitive matches actual native TC2 ownership result and handles FIA2 without changing FIA1; confirmed remaining native FIA1/TC1..4-ready limitation and all-ones acceptance; CPU dependency mocks, no hardware qualification or new TC-cold requests.");

@@ -2039,7 +2039,7 @@ void tglConnectionRecord(void *port, uint32_t event, bool done, uint32_t result,
 	if (!tglConnectionLock || !port || event >= tglConnectionEvents) return;
 	auto p = static_cast<uint8_t *>(port);
 	auto config = *reinterpret_cast<uint32_t **>(p + 0x548);
-	if (!config || config[0] != 4) return;
+	if (!config || config[0] >= 9) return;
 	TGLConnectionRecord record {};
 	auto r = record.q;
 	uint64_t uptime;
@@ -2209,9 +2209,9 @@ static bool tglQuietTraining() {
 // startup AUX history before physical link training begins. No extra AUX IO.
 struct TGLDPCDRecord {
 	uint64_t ns, thread;
-	uint32_t word[12];
+	uint32_t word[16];
 };
-static_assert(sizeof(TGLDPCDRecord) == 64, "DPCD observation schema");
+static_assert(sizeof(TGLDPCDRecord) == 80, "DPCD observation schema");
 // Retain the complete boot negotiation (504 records in the r325 case),
 // including successful preparation and later scanout retraining. No extra IO.
 TGLDPCDRecord tglDPCDFirst[1024] {}, tglDPCDLast[128] {};
@@ -2221,7 +2221,7 @@ void tglDPCDRecord(void *port, uint32_t address, void *data, uint32_t length,
 	bool write, bool done, uint32_t result, void *caller) {
 	if (!tglAUXLock || !port || (address > 0x220 && address != 0x600)) return;
 	auto config = *reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port) + 0x548);
-	if (!config || config[0] != 4) return;
+	if (!config || config[0] >= 9) return;
 	TGLDPCDRecord record {};
 	uint64_t uptime;
 	clock_get_uptime(&uptime);
@@ -2229,7 +2229,7 @@ void tglDPCDRecord(void *port, uint32_t address, void *data, uint32_t length,
 	record.thread = reinterpret_cast<uintptr_t>(current_thread());
 	auto w = record.word;
 	w[1] = address; w[2] = length; w[3] = write; w[4] = done; w[5] = result;
-	w[7] = tglConnectionCaller(caller);
+	w[7] = tglConnectionCaller(caller); w[12]=config[0]; w[13]=1;
 	if (data && (write || (done && !result))) {
 		w[6] = length < 16 ? length : 16;
 		memcpy(w + 8, data, w[6]);
@@ -2253,10 +2253,10 @@ void tglDPCDPublish() {
 	memcpy(copy + sizeof(tglDPCDFirst), tglDPCDLast, sizeof(tglDPCDLast));
 	IOSimpleLockUnlock(tglAUXLock);
 	auto root = IORegistryEntry::getRegistryRoot();
-	root->setProperty("TGLDPCD4First", copy, firstCount * sizeof(TGLDPCDRecord));
-	root->setProperty("TGLDPCD4Last", copy + sizeof(tglDPCDFirst), sizeof(tglDPCDLast));
-	root->setProperty("TGLDPCD4Count", count, 32);
-	root->setProperty("TGLDPCD4FirstCapacity", arrsize(tglDPCDFirst), 32);
+	root->setProperty("WhateverXeDPCDFirst", copy, firstCount * sizeof(TGLDPCDRecord));
+	root->setProperty("WhateverXeDPCDLast", copy + sizeof(tglDPCDFirst), sizeof(tglDPCDLast));
+	root->setProperty("WhateverXeDPCDCount", count, 32);
+	root->setProperty("WhateverXeDPCDFirstCapacity", arrsize(tglDPCDFirst), 32);
 	IOFree(copy, size);
 }
 
@@ -2942,9 +2942,6 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 			// Read immutable firmware and board overrides before hook selection.
             xelpReadFirmware(pci);
 			tglLoadHDMIWiring(pci);
-			tglCRCRequested = !tglHDMIB && checkKernelArgument("-tglcrc");
-			tglHoldFirstD3 = tglCRCRequested && checkKernelArgument("-tglholdfirstd3");
-			tglCursorPTERequested = tglCRCRequested && checkKernelArgument("-tglcursorpte");
 			modDVMTCalcFix.processKernel(patcher, info);
 			// TGL bypasses the generic platform patcher. Support only the
 			// explicitly requested stolen display pool size on this path.
@@ -9268,6 +9265,20 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
    if(modeKnown && modeOK && !tglModeTransitionLock) tglModeTransitionLock=IORecursiveLockAlloc();
    IORegistryEntry::getRegistryRoot()->setProperty("TGLModeSerializationReady",
     modeKnown && modeOK && tglModeTransitionLock!=nullptr);
+   // Match each original direct call before enabling the coordinate adapter.
+   // Route availability is insufficient evidence for this donor-specific ABI.
+   const uint32_t fiaSites[]={0x5FD28,0x5FDF4,0x5FEE5,0x6000B,0x600CF};
+   const uint8_t fiaCalls[][5]={{0xE8,0x61,0x01,0xFC,0xFF},{0xE8,0xAF,0,0xFC,0xFF},
+    {0xE8,0xA4,0xFF,0xFB,0xFF},{0xE8,0x7E,0xFE,0xFB,0xFF},{0xE8,0xD4,0xFD,0xFB,0xFF}};
+   bool fiaKnown=modeKnown && modeOK && tglModeTransitionLock && orgTGLPortWriteReg;
+   if(fiaKnown)for(unsigned i=0;i<arrsize(fiaSites);++i)
+    fiaKnown &= !memcmp(reinterpret_cast<const void *>(address+fiaSites[i]),fiaCalls[i],5);
+   if(fiaKnown){
+    KernelPatcher::RouteRequest read("__ZN14AppleIntelPort14readRegister32Ej",wrapTGLPortReadReg,orgTGLPortReadReg);
+    if(patcher.routeMultiple(index,&read,1,address,size)){tglNativeFiaBase=address;tglNativeFiaReady=true;}
+    patcher.clearError();
+   }
+   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeNativeFiaReady",tglNativeFiaReady);
    __atomic_store_n(&tglModeResultReady,modeKnown && modeOK,__ATOMIC_RELEASE);
    IORegistryEntry::getRegistryRoot()->setProperty("TGLModeResultReady",tglModeResultReady);
 			patcher.clearError();
@@ -9447,7 +9458,8 @@ bool XE::wrapTGLFramebufferStart(IOService *that, IOService *provider) {
 
 uint32_t XE::wrapTGLLaneMask(void *port) {
 	// The 20A2314a HAL expects a physical lane mask, not a lane count.
-	// MI646 TC2 is a fixed four-lane DP link; FIA alt-mode assignment is zero.
+	// Legacy fixed DP exposes all four physical lanes; negotiated lane count
+	// remains the native training decision, not a board-specific maximum.
 	auto bytes = static_cast<uint8_t *>(port);
 	auto config = *reinterpret_cast<uint32_t **>(bytes + 0x548);
 	auto mode = *reinterpret_cast<uint32_t *>(bytes + 0x550);
@@ -11334,6 +11346,8 @@ uint32_t XE::wrapTGLProbePort(void *port) {
     // Register a fixed-DP backend only after the provider's powered mode4
     // probe. This is monotonic policy, NOT connection state or a power lease.
     // Never clear it at HPD-low: outstanding AUX refs must keep their puts.
+    if(mode==4 && ddi>=3 && ddi<=8)
+        __atomic_or_fetch(&callbackXE->tglModularProbed,1U<<ddi,__ATOMIC_RELEASE);
     if(mode==4 && ddi<9 && (callbackXE->tglTCAutoCandidates&(1U<<ddi))) {
         const auto selected=__atomic_or_fetch(&callbackXE->tglTCAutoRegistered,1U<<ddi,__ATOMIC_RELEASE);
         IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeTCDPRegistered",selected,32);
@@ -11556,7 +11570,21 @@ uint32_t XE::wrapTGLSetPortMode(void *port, uint32_t mode) {
 	auto caller = __builtin_return_address(0);
 	tglConnectionRecord(port, 2, false, 0, mode, caller);
 	tglAUXRecord(port, 1, false, 0, mode, 0);
+ const bool fiaEligible=(mode==0 || mode==4) && traceDDI<9 &&
+  (*reinterpret_cast<uint32_t *>(traceBytes+0x550)==0 || *reinterpret_cast<uint32_t *>(traceBytes+0x550)==4) &&
+  self->tglLegacyTCEligible(traceDDI) && (__atomic_load_n(&self->tglModularProbed,__ATOMIC_ACQUIRE)&(1U<<traceDDI));
+ TGLNativeFiaScope fiaScope(self->tglNativeFiaContext,reinterpret_cast<uintptr_t>(current_thread()),fiaEligible?port:nullptr,
+  traceDDI,transitionLock && self->tglNativeFiaReady);
 	auto result = FunctionCast(wrapTGLSetPortMode, callbackXE->orgTGLSetPortMode)(port, mode);
+ fiaScope.finish();
+ if(fiaEligible && self->tglNativeFiaReady && transitionLock){
+  TGLNativeFia mapping;
+  if(mapping.resolve(traceDDI)){
+   uint32_t record[]={1,traceDDI,mapping.fia.instance,mapping.fia.readyMask,
+    __atomic_load_n(&self->tglNativeFiaReads,__ATOMIC_RELAXED),__atomic_load_n(&self->tglNativeFiaWrites,__ATOMIC_RELAXED)};
+   IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeNativeFiaAccess",record,sizeof(record));
+  }
+ }
  // A rejected mode must not look like success to training/lifetime callers.
  // Read software state only; do not add FIA MMIO outside a power reference.
  tglRecordStartOrder(11,port,traceDDI,mode,*reinterpret_cast<uint32_t *>(traceBytes+0x550),result);
@@ -11600,14 +11628,14 @@ uint32_t XE::wrapTGLOptimalLaneCount(void *port, const void *timing, uint32_t bp
 	const auto result = FunctionCast(wrapTGLOptimalLaneCount, callbackXE->orgTGLOptimalLaneCount)(port, timing, bpp);
 	auto p = static_cast<uint8_t *>(port);
 	auto config = *reinterpret_cast<uint32_t **>(p + 0x548);
-	if (!config || config[0] != 4) return result;
+	if (!config || config[0] >= 9) return result;
 	uint64_t r[12] {}, uptime;
 	clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, r);
 	r[1] = result; r[2] = bpp; r[3] = p[0x11]; r[4] = p[0x117];
 	auto &lanes = *reinterpret_cast<uint32_t *>(p + 0x124);
 	r[5] = lanes; r[6] = *reinterpret_cast<uint32_t *>(p + 0x128);
 	r[7] = *reinterpret_cast<uint32_t *>(p + 0x550);
-	r[8] = lanes; r[9] = 0;
+	r[8] = lanes; r[9] = 0; r[11] = config[0];
 	static uint32_t sequence {};
 	r[10] = __sync_add_and_fetch(&sequence, 1);
 	char key[48]; snprintf(key, sizeof(key), "TGLOptimalLanesLast%u", static_cast<uint32_t>(r[10]) % 32);
@@ -11629,28 +11657,13 @@ uint32_t XE::wrapTGLDPPower(void *port, uint8_t state) {
 	record[2] = state; record[3] = state;
 	record[4] = config ? config[0] : 0xFFFFFFFFU;
 	auto s = callbackXE;
-	// Diagnostic control: keep the sink in D0 for the first requested D3
-	// after startup, only after pipe A has actually stopped. Subsequent sleep
-	// requests are native D3 controls in the same boot. Never report fabricated
-	// AUX success: the native setter writes/read-verifies the effective state.
-	if (s->tglHoldFirstD3 && state == 2 && config && config[0] == 4 && record[0] > 60000000000ULL) {
-		auto manager = *reinterpret_cast<uint8_t **>(bytes + 0x578);
-		auto base = manager ? *reinterpret_cast<volatile uint8_t **>(manager + 0x50) : nullptr;
-		if (base && *reinterpret_cast<uint32_t *>(manager + 0x60) >= 0x7000C) {
-			record[5] = *reinterpret_cast<volatile uint32_t *>(base + 0x70008);
-			if (!(record[5] & 0xC0000000U) && __sync_bool_compare_and_swap(&s->tglHeldD3, 0, 1))
-				record[3] = 1;
-		}
-	}
 	const auto effective = static_cast<uint8_t>(record[3]);
 	tglAUXRecord(port, 2, false, 0, state, effective);
 	const auto result = FunctionCast(wrapTGLDPPower, s->orgTGLDPPower)(port, effective);
 	tglConnectionRecord(port, 4, true, result, effective, caller);
 	tglAUXRecord(port, 2, true, result, state, effective);
 	clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, record + 1);
-	record[6] = result; record[7] = s->tglHeldD3;
-	if (effective != state)
-		IORegistryEntry::getRegistryRoot()->setProperty("TGLSinkD3Diagnostic", record, sizeof(record));
+	record[6] = result;
 	if (config && config[0] < 9) {
 		char key[48];
 		uint32_t values[] = {state, result, *reinterpret_cast<uint32_t *>(bytes + 0x550),
@@ -12550,11 +12563,7 @@ uint32_t XE::wrapTGLFBUserClient(void *fb, void *task, void *security, uint32_t 
 		tglStreamPublish();
 		tglDPCDPublish();
 	}
-	if (type == 1 && r == 0 && id == 0 && callbackXE->tglCRCRequested &&
-		IOUserClient::clientHasPrivilege(task, kIOClientPrivilegeAdministrator) == kIOReturnSuccess) {
-		tglMeasureReceiverCRC(fb);
-		tglMeasureCRC(fb);
-	}
+
 	return r;
 }
 
@@ -12638,7 +12647,8 @@ uint32_t XE::wrapTGLAGDCPortStatus(void *controller, void *request, void *output
 	return r;
 }
 
-// Backend qualification remains restricted to the known legacy TC2 path.
+// Eligibility comes from explicit wiring or a registered fixed-DP probe;
+// coordinate coverage alone never admits another transport.
 // Expanding this gate requires the corresponding probe/PHY/AUX mapping; making
 // the resource pool multi-port must not silently enable an unimplemented PHY.
 XE::TGLTrainingLease *XE::tglTrainingLeaseForDDI(uint32_t ddi) {
@@ -13081,81 +13091,23 @@ uint32_t XE::wrapTGLTrainingEnd(void *controller, void *request) {
 	return r;
 }
 
-// Phase-correlated observations only. No corrective writes; HIP selection
-// for PLL readback is restored under the existing bank lock.
+// Port-identified software state only. No diagnostic MMIO or HIP selection.
 void XE::tglObserveActivation(void *controller, void *port, void *path, uint32_t phase, bool done, uint32_t result) {
-	if (tglQuietTraining()) return;
-	if (!controller || phase >= 4) return;
-	auto ctl = static_cast<uint8_t *>(controller);
-	auto access = *reinterpret_cast<uint8_t **>(ctl + 0xC40);
-	if (!access) return;
-	auto base = *reinterpret_cast<volatile uint8_t **>(access + 0x50);
-	if (!base || *reinterpret_cast<uint32_t *>(access + 0x60) < 0x16A000) return;
-	auto pb = static_cast<uint8_t *>(port);
-	auto config = pb ? *reinterpret_cast<uint32_t **>(pb + 0x548) : nullptr;
-	if (pb && (!config || config[0] != 4 || *reinterpret_cast<uint32_t *>(pb + 0x550) != 4)) return;
-	static const uint32_t regs[] {
-		0x45400,0x45404,0x45408,0x4540C,0x45440,0x45444,0x4544C,
-		0x45450,0x45454,0x4545C,0x46034,0x46110,0x164280,
-		0x163890,0x163894,0x1638A0,0x1638C0,
-		0x46140,0x46144,0x46148,0x4614C,
-		0x60400,0x61400,0x62400,0x63400,
-		0x60540,0x61540,0x62540,0x63540,0x64400
-	};
-	static uint32_t sequence {}, counts[4] {};
-	uint32_t record[14 + 2 * arrsize(regs)] {};
-	record[0] = __sync_add_and_fetch(&sequence, 1);
-	record[1] = phase; record[2] = done; record[3] = result;
-	record[4] = __sync_add_and_fetch(&counts[phase], 1);
-	tglTimeEvent(25 + phase, record[0], done, phase, result);
-	record[5] = ctl[0x918];
-	record[6] = config ? config[0] : 0xFFFFFFFFU;
-	record[7] = pb ? *reinterpret_cast<uint32_t *>(pb + 0x124) : 0;
-	record[8] = pb ? *reinterpret_cast<uint32_t *>(pb + 0x128) : 0;
-	record[9] = path ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(path) + 0x3640) : 0xFFFFFFFFU;
-	record[10] = pb ? *reinterpret_cast<void **>(pb + 0x578) == access : 0;
-	if (path) {
-		auto fb = *reinterpret_cast<uint8_t **>(static_cast<uint8_t *>(path) + 0x32B0);
-		record[11] = fb && *reinterpret_cast<void **>(fb + 0x4A40) == access;
-		record[12] = *reinterpret_cast<void **>(static_cast<uint8_t *>(path) + 0x3648) == port;
-	}
-	record[13] = arrsize(regs);
-	for (size_t i = 0; i < arrsize(regs); i++) {
-		record[14 + 2*i] = regs[i];
-		record[15 + 2*i] = *reinterpret_cast<volatile uint32_t *>(base + regs[i]);
-	}
-	// Actual PLL field readbacks at pattern and buffer boundaries. Training
-	// entry may precede PHY power, so don't access banked PHY there.
-	static const uint32_t pll[] {0x20D4,0x20D8,0x2130,0x212C,0x2200,0x2204,0x2208,0x2210,0x2214,0x2218,0x220C,0x2244,0x224C,0x236C};
-	uint32_t phy[4 + 2*arrsize(pll)] {record[0], phase, done, 0};
-	if (pb && (phase == 1 || phase == 2) && callbackXE->tglDekelLock) {
-		const auto irq = IOSimpleLockLockDisableInterrupt(callbackXE->tglDekelLock);
-		auto hip = reinterpret_cast<volatile uint32_t *>(base + 0x1010A0);
-		const auto saved = *hip;
-		for (size_t i = 0; i < arrsize(pll); i++) {
-			*hip = (saved & ~0xF00U) | (((pll[i] >> 12) & 0xF) << 8); (void)*hip;
-			phy[4 + 2*i] = pll[i];
-			phy[5 + 2*i] = *reinterpret_cast<volatile uint32_t *>(base + 0x169000 + (pll[i] & 0xFFF));
-		}
-		*hip = saved; (void)*hip;
-		IOSimpleLockUnlockEnableInterrupt(callbackXE->tglDekelLock, irq);
-		phy[3] = arrsize(pll);
-	}
-	char key[64];
-	snprintf(key,sizeof(key),"TGLActivation%uLast%u",phase,record[4] % 32);
-	IORegistryEntry::getRegistryRoot()->setProperty(key,record,sizeof(record));
-	if (phy[3]) {
-		snprintf(key,sizeof(key),"TGLActivationPLL%uLast%u",phase,record[4] % 32);
-		IORegistryEntry::getRegistryRoot()->setProperty(key,phy,sizeof(phy));
-	}
-	if (record[4] <= 16) {
-		snprintf(key,sizeof(key),"TGLActivation%uFirst%u",phase,record[4]);
-		IORegistryEntry::getRegistryRoot()->setProperty(key,record,sizeof(record));
-		if (phy[3]) {
-			snprintf(key,sizeof(key),"TGLActivationPLL%uFirst%u",phase,record[4]);
-			IORegistryEntry::getRegistryRoot()->setProperty(key,phy,sizeof(phy));
-		}
-	}
+ if(tglQuietTraining() || !controller || phase>=4)return;
+ auto pb=static_cast<uint8_t *>(port);
+ auto config=pb?*reinterpret_cast<uint32_t **>(pb+0x548):nullptr;
+ if(pb && (!config || config[0]>=9))return;
+ static uint32_t sequence {};
+ uint64_t r[16] {},uptime;clock_get_uptime(&uptime);absolutetime_to_nanoseconds(uptime,r);
+ r[1]=reinterpret_cast<uintptr_t>(current_thread());r[2]=__sync_add_and_fetch(&sequence,1);
+ r[3]=phase;r[4]=done;r[5]=result;r[6]=config?config[0]:0xFFFFFFFFU;
+ r[7]=pb?*reinterpret_cast<uint32_t *>(pb+0x550):0;
+ r[8]=pb?*reinterpret_cast<uint32_t *>(pb+0x124):0;
+ r[9]=pb?*reinterpret_cast<uint32_t *>(pb+0x128):0;
+ r[10]=path?*reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(path)+0x3640):0xFFFFFFFFU;
+ r[11]=reinterpret_cast<uintptr_t>(port);r[12]=reinterpret_cast<uintptr_t>(path);r[15]=0x4D454D31;
+ char key[64];snprintf(key,sizeof(key),"WhateverXeActivationLast%u",static_cast<uint32_t>(r[2])%64);
+ IORegistryEntry::getRegistryRoot()->setProperty(key,r,sizeof(r));
 }
 
 // Resource hooks observe before the donor clears path->port. No extra hardware
@@ -13420,7 +13372,7 @@ void XE::tglObservePath(void *port, void *path, uint32_t event, bool done, uint3
 	if (!port || event >= 8) return;
 	auto pb = static_cast<uint8_t *>(port);
 	auto config = *reinterpret_cast<uint32_t **>(pb + 0x548);
-	if (!config || (config[0] != 4 && !(callbackXE->tglHDMIB && config[0] == 1))) return;
+	if (!config || config[0]>=9) return;
 	static uint32_t counts[8] {};
 	uint64_t record[32] {}, uptime;
 	clock_get_uptime(&uptime);
@@ -13450,28 +13402,12 @@ void XE::tglObservePath(void *port, void *path, uint32_t event, bool done, uint3
 	record[27] = arg;
 	record[28] = *reinterpret_cast<uint32_t *>(pb + 0x120);
 	record[31] = reinterpret_cast<uintptr_t>(caller);
-	auto access = *reinterpret_cast<uint8_t **>(pb + 0x578);
-	if (access && *reinterpret_cast<uint32_t *>(access + 0x60) >= 0xC4004) {
-		auto base = *reinterpret_cast<volatile uint8_t **>(access + 0x50);
-		if (base) {
-			record[21] = *reinterpret_cast<volatile uint32_t *>(base + 0x64000 + 0x100 * config[0]);
-			record[29] = *reinterpret_cast<volatile uint32_t *>(base + 0x45404);
-			if (record[15] < 4) {
-				const uint32_t pipeOffset = static_cast<uint32_t>(record[15]) * 0x1000;
-				record[18] = *reinterpret_cast<volatile uint32_t *>(base + 0x46140 + 4 * record[15]);
-				record[19] = *reinterpret_cast<volatile uint32_t *>(base + 0x60400 + pipeOffset);
-				record[20] = *reinterpret_cast<volatile uint32_t *>(base + 0x60540 + pipeOffset);
-				record[22] = *reinterpret_cast<volatile uint32_t *>(base + 0x70008 + pipeOffset);
-				record[23] = *reinterpret_cast<volatile uint32_t *>(base + 0x70180 + pipeOffset);
-				record[24] = *reinterpret_cast<volatile uint32_t *>(base + 0x7019C + pipeOffset);
-			}
-		}
-	}
+	record[29]=0x4D454D31; // MEM1: prior MMIO slots remain unsampled
 	char key[64];
-	snprintf(key, sizeof(key), "TGLPath%uLast%u", event, static_cast<uint32_t>(record[2]) % 64);
+	snprintf(key, sizeof(key), "WhateverXePath%uLast%u", event, static_cast<uint32_t>(record[2]) % 64);
 	IORegistryEntry::getRegistryRoot()->setProperty(key, record, sizeof(record));
 	if (record[2] <= 64) {
-		snprintf(key, sizeof(key), "TGLPath%uFirst%u", event, static_cast<uint32_t>(record[2]));
+		snprintf(key, sizeof(key), "WhateverXePath%uFirst%u", event, static_cast<uint32_t>(record[2]));
 		IORegistryEntry::getRegistryRoot()->setProperty(key, record, sizeof(record));
 	}
 }
@@ -13645,17 +13581,11 @@ void XE::tglObserveEngine(void *power, uint32_t event, bool done, void *caller) 
 	r[3] = event; r[4] = done; r[5] = reinterpret_cast<uintptr_t>(caller);
 	r[6] = reinterpret_cast<uintptr_t>(power); r[7] = b[0x18];
 	memcpy(r + 8, b + 0x20, 16);
-	auto access = *reinterpret_cast<uint8_t **>(b + 0x78);
-	auto base = access ? *reinterpret_cast<volatile uint8_t **>(access + 0x50) : nullptr;
-	static const uint32_t regs[] {0x45404,0x45454,0x46070,0x45008,0x42000,
-		0x64C00,0x64C04,0x64C08,0x16210C,0x6C10C,0x16010C,0x162120,0x6C120,
-		0x70008,0x70180,0x60400,0x60540,0x64400};
-	if (base && *reinterpret_cast<uint32_t *>(access + 0x60) >= 0x162124)
-		for (uint32_t i=0; i<arrsize(regs); ++i) r[10+i] = *reinterpret_cast<volatile uint32_t *>(base + regs[i]);
-	char key[48]; snprintf(key, sizeof(key), "TGLEngineLast%u", static_cast<uint32_t>(r[2]) % 64);
+	r[31]=0x4D454D31; // software state, no implicit port or pipe
+	char key[48]; snprintf(key, sizeof(key), "WhateverXeEngineLast%u", static_cast<uint32_t>(r[2]) % 64);
 	IORegistryEntry::getRegistryRoot()->setProperty(key, r, sizeof(r));
 	if (r[2] <= 32) {
-		snprintf(key, sizeof(key), "TGLEngineFirst%u", static_cast<uint32_t>(r[2]));
+		snprintf(key, sizeof(key), "WhateverXeEngineFirst%u", static_cast<uint32_t>(r[2]));
 		IORegistryEntry::getRegistryRoot()->setProperty(key, r, sizeof(r));
 	}
 }
@@ -13680,59 +13610,11 @@ void XE::wrapTGLEngineDisable(void *power) {
 uint32_t XE::wrapTGLCursorSetup(void *controller) {
 	const auto result = FunctionCast(wrapTGLCursorSetup, callbackXE->orgTGLCursorSetup)(controller);
 	tglObserveCursorLifetime(controller, nullptr, nullptr, 0, result);
-	if (!result && callbackXE->tglCursorPTERequested) {
-		tglInstallCursorPTEs(controller);
-		tglObserveCursorLifetime(controller, nullptr, nullptr, 4, result);
-	}
+
 	return result;
 }
 
-// Reinstall only the just-allocated, physically contiguous cursor range.
-// Each 64-bit store is read back before the next; preserve the native result.
-// This tests delivery of the required PTEs, not a guessed mapping/cache policy.
-void XE::tglInstallCursorPTEs(void *controller) {
-	if (!controller || controller != callbackXE->tglObservationController) return;
-	auto c = static_cast<uint8_t *>(controller);
-	auto memory = OSDynamicCast(IOBufferMemoryDescriptor, *reinterpret_cast<OSObject **>(c + 0xCD0));
-	auto access = *reinterpret_cast<uint8_t **>(c + 0xC40);
-	auto base = access ? *reinterpret_cast<volatile uint8_t **>(access + 0x50) : nullptr;
-	auto ptes = *reinterpret_cast<volatile uint8_t **>(c + 0xCA0);
-	const uint64_t start = *reinterpret_cast<uint64_t *>(c + 0xDC0);
-	const auto size = *reinterpret_cast<uint32_t *>(c + 0xDC8);
-	const auto gttSize = *reinterpret_cast<uint32_t *>(c + 0xCEC);
-	uint64_t r[16] {}, ticks;
-	clock_get_uptime(&ticks); absolutetime_to_nanoseconds(ticks, r);
-	r[2] = start; r[3] = size;
-	if (memory && base && ptes == base + 0x800000 && page_size == 4096 &&
-		size == 0x180000 && start == 0x4000000 && memory->getLength() >= size &&
-		*reinterpret_cast<uint32_t *>(c + 0xCF0) == kIOMemoryMapperNone &&
-		*reinterpret_cast<uint32_t *>(access + 0x60) >= 0x800000 + uint64_t(gttSize) &&
-		((start + size) >> 9) <= gttSize) {
-		IOByteCount span = 0;
-		const uint64_t physical = memory->getPhysicalSegment(0, &span, kIOMemoryMapperNone);
-		r[4] = physical; r[5] = span;
-		constexpr uint64_t mask = 0x7FFFFFF000ULL;
-		if (physical && !(physical & 4095) && span >= size &&
-			physical <= mask - (size - 4096) && !(physical & ~mask)) {
-			r[6] = 1;
-			for (uint32_t offset = 0; offset < size; offset += 4096) {
-				auto entry = reinterpret_cast<volatile uint64_t *>(ptes + ((start + offset) >> 9));
-				const uint64_t expected = (physical + offset) | 7;
-				if (*entry != expected) ++r[7];
-				*entry = expected;
-				const auto actual = *entry;
-				++r[8];
-				if (actual != expected) { ++r[9]; if (r[9] == 1) { r[12] = offset; r[13] = expected; r[14] = actual; } }
-			}
-			for (uint32_t offset = 0; offset < size; offset += 4096) {
-				const auto actual = *reinterpret_cast<volatile uint64_t *>(ptes + ((start + offset) >> 9));
-				if (actual != ((physical + offset) | 7)) ++r[10];
-			}
-		}
-	}
-	clock_get_uptime(&ticks); absolutetime_to_nanoseconds(ticks, r+1);
-	IORegistryEntry::getRegistryRoot()->setProperty("TGLCursorPTEInstall", r, sizeof(r));
-}
+
 
 void XE::wrapTGLRestoreGTT(void *controller) {
 	tglObserveCursorLifetime(controller, nullptr, nullptr, 1, 0);
@@ -13898,7 +13780,7 @@ void XE::tglObserveScanout(void *fb, void *plane, uint32_t event, bool done, uin
 			r[53+i] = (uint64_t(reg) << 32) | *reinterpret_cast<volatile uint32_t *>(base + reg);
 		}
 		r[89] = *reinterpret_cast<volatile uint32_t *>(base + 0x46140 + 4*pipe);
-		r[90] = *reinterpret_cast<volatile uint32_t *>(base + 0x64400);
+		r[90] = 0; // retired fixed-TC2 diagnostic slot
 	}
 	// Sample first/second/final pages of both FB's GTT offset and plane1 surface.
 	// The donor maps GGTT at BAR0+8MiB; validate both its pointer and span.
@@ -13936,14 +13818,6 @@ void XE::tglObserveScanout(void *fb, void *plane, uint32_t event, bool done, uin
 	for (auto reg : colorRegs) sample(reg + 0x100*pipe);
 	sample(0x4A480 + 0x800*pipe); // gamma mode; do not disturb indexed LUT access
 	for (uint32_t i=0; i<32; ++i) sample(0x100000 + 4*i); // first16 fences
-	// HDMI-B buffer and per-transcoder live state remain visible even when a
-	// shared-client snapshot has no plane from which to select its pipe.
-	sample(0x64100);
-	for (uint32_t i=0; i<4; ++i) {
-		sample(0x46140 + 4*i);
-		sample(0x60400 + 0x1000*i);
-		sample(0x70040 + 0x1000*i);
-	}
 	// r57: distinguish a running timing generator from a valid output stream.
 	// Status reads do not acknowledge W1C causes or enable an interrupt. Keep
 	// these on the selected pipe/transcoder; do not power up unrelated blocks.
@@ -13963,13 +13837,7 @@ void XE::tglObserveScanout(void *fb, void *plane, uint32_t event, bool done, uin
 	static const uint32_t hdcpRegs[] {0x66400,0x6641C,0x66498,0x664B0,0x664B4,0x664C0};
 	for (auto reg : hdcpRegs) sample(reg + 0x100*pipe);
 	sample(0x66C04); // key-load status only; never read key material
-	// Passive combo PLL readback for HDMI timing qualification. Fits the
-	// existing bounded record; no writes, forcewake or polling here.
-	if (callbackXE->tglHDMIB) {
-		static const uint32_t pllRegs[] {0x46010,0x46014,0x164280,0x164284,
-			0x164288,0x16428C,0x164290,0x51004};
-		for (auto reg : pllRegs) sample(reg);
-	}
+
 	r[112] = next;
 	char key[48]; snprintf(key, sizeof(key), "TGLScan%uLast%u", event, static_cast<uint32_t>(r[2]) % 64);
 	IORegistryEntry::getRegistryRoot()->setProperty(key, r, sizeof(r));
@@ -13977,182 +13845,6 @@ void XE::tglObserveScanout(void *fb, void *plane, uint32_t event, bool done, uin
 		snprintf(key, sizeof(key), "TGLScan%uFirst%u", event, static_cast<uint32_t>(r[2]));
 		IORegistryEntry::getRegistryRoot()->setProperty(key, r, sizeof(r));
 	}
-}
-
-// Root-only -tglcrc diagnostic on the established active DDI4/pipe0 path.
-// Linux drm_dp_start/get/stop_crc contract: preserve TEST_SINK except START,
-// require the modulo-16 receive-frame count to advance, and read six CRC bytes.
-// Clear only the TGL PIPE_STATUS underrun W1C bit before the sample window;
-// do not enable interrupts or change scanout. Receiver sampling precedes source
-// CRC selection so source diagnostic writes cannot explain this window's errors.
-void XE::tglMeasureReceiverCRC(void *fb) {
-	static uint32_t busy {}, sequence {};
-	if (!__sync_bool_compare_and_swap(&busy, 0, 1)) return;
-	uint64_t r[160] {}, uptime;
-	clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, r);
-	r[2] = __sync_add_and_fetch(&sequence, 1); r[3] = 1;
-	auto s = callbackXE;
-	auto b = static_cast<uint8_t *>(fb);
-	auto ctl = *reinterpret_cast<uint8_t **>(b + 0x1D0);
-	auto lock = *reinterpret_cast<IORecursiveLock **>(b + 0x4220);
-	auto access = *reinterpret_cast<uint8_t **>(b + 0x4A40);
-	auto base = access ? *reinterpret_cast<volatile uint8_t **>(access + 0x50) : nullptr;
-	if (ctl == s->tglObservationController && lock && base && r[0] > 30000000000ULL &&
-		*reinterpret_cast<uint32_t *>(access + 0x60) >= 0x74000 && s->tglPortByDDI &&
-		s->orgTGLPathLookup && s->orgTGLAGDCAUX && s->orgTGLRegisterWrite) {
-		IORecursiveLockLock(lock);
-		auto port = reinterpret_cast<void *(*)(uint32_t)>(s->tglPortByDDI)(4);
-		auto path = port ? static_cast<uint8_t *>(reinterpret_cast<void *(*)(void *)>(s->orgTGLPathLookup)(port)) : nullptr;
-		auto read = [&](uint32_t reg) { return *reinterpret_cast<volatile uint32_t *>(base + reg); };
-		r[4] = reinterpret_cast<uintptr_t>(path); r[5] = read(0x70008);
-		r[6] = read(0x60400); r[7] = read(0x60540); r[8] = read(0x64400);
-		if (path && *reinterpret_cast<void **>(path + 0x32B0) == fb &&
-			*reinterpret_cast<uint32_t *>(path + 0x3640) == 0 &&
-			*reinterpret_cast<void **>(path + 0x3648) == port &&
-			(r[5] & 0xC0000000) == 0xC0000000 && (r[6] & 0x87000000) == 0x82000000 &&
-			(r[7] & 0x88000700) == 0x80000300 && (r[8] & 0x80000000)) {
-			auto aux = [&](uint32_t address, uint8_t *data, uint8_t length, bool write) {
-				uint8_t input[32] {}, output[32] {};
-				*reinterpret_cast<uint32_t *>(input) = 5;
-				*reinterpret_cast<uint32_t *>(input + 8) = address;
-				input[12] = length; input[13] = write;
-				if (write) memcpy(input + 16, data, length);
-				const auto result = FunctionCast(wrapTGLAGDCAUX, s->orgTGLAGDCAUX)(ctl, input, output);
-				if (!result && !write) memcpy(data, output + 16, length);
-				return result;
-			};
-			uint8_t caps = 0, saved = 0, current = 0;
-			r[9] = aux(0x246, &caps, 1, false); r[10] = caps;
-			r[3] = r[9] ? 2 : (caps & 0x20) ? 3 : 4;
-			if (!r[9] && (caps & 0x20)) {
-				r[11] = aux(0x270, &saved, 1, false); r[12] = saved;
-				r[3] = r[11] ? 5 : (saved & 1) ? 6 : 7;
-				if (!r[11] && !(saved & 1)) {
-					current = saved | 1;
-					r[13] = aux(0x270, &current, 1, true);
-					r[14] = aux(0x270, &current, 1, false); r[15] = current;
-					if (!r[13] && !r[14] && (current & 1)) {
-						r[3] = 0; r[16] = read(0x70058);
-						// TGL has only bit31 in icl_pipe_status_underrun_mask.
-						FunctionCast(wrapTGLRegisterWrite, s->orgTGLRegisterWrite)(access, 0x70058, 0x80000000);
-						r[17] = read(0x70058); r[18] = read(0x44404); r[19] = read(0x4440C);
-						uint8_t previous = caps & 15;
-						for (uint32_t i=0; i<16; ++i) {
-							IOSleep(17);
-							auto sample = r + 32 + 8*i;
-							clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, sample);
-							sample[1] = read(0x70040); sample[2] = read(0x70000); sample[3] = read(0x70058);
-							uint8_t bytes[7] {};
-							sample[4] = aux(0x240, bytes, 7, false); memcpy(sample + 5, bytes, sizeof(bytes));
-							sample[6] = read(0x70040); sample[7] = read(0x44408);
-							if (sample[4]) { r[3] = 8; break; }
-							// START may reset a previous test's count1 to0. That is
-							// not completion: require a post-START zero followed by
-							// a nonzero count before accepting any CRC payload.
-							if (!(bytes[6] & 15)) r[28] = 1;
-							else if (r[28]) ++r[27];
-							if ((bytes[6] & 15) != previous) ++r[20];
-							previous = bytes[6] & 15;
-						}
-						if (!r[3] && !r[27]) r[3] = r[28] ? 9 : 11; // no completion / reset not observed
-					}
-					// Even an uncertain START write gets cleanup. Preserve all other
-					// bits from a fresh read; fallback to the verified original value.
-					r[21] = aux(0x270, &current, 1, false);
-					current = r[21] ? saved : static_cast<uint8_t>((current & ~1U) | (saved & 1));
-					r[22] = aux(0x270, &current, 1, true);
-					r[23] = aux(0x270, &current, 1, false); r[24] = current;
-					if (r[22] || r[23] || ((current ^ saved) & 1)) r[3] = 10;
-					r[25] = read(0x70058); r[26] = read(0x70040);
-				}
-			}
-		}
-		IORecursiveLockUnlock(lock);
-	}
-	clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, r + 1);
-	char key[48]; snprintf(key, sizeof(key), "TGLReceiverCRCLast%u", static_cast<uint32_t>(r[2]) % 16);
-	IORegistryEntry::getRegistryRoot()->setProperty(key, r, sizeof(r));
-	__sync_lock_test_and_set(&busy, 0);
-}
-
-// Root-only, explicit -tglcrc experiment on the established DDI4/pipe0 path.
-// Select plane1 and DMUX CRC taps, discard the first three frame boundaries,
-// then collect four samples each. No interrupt enables, modeset or pixel writes.
-void XE::tglMeasureCRC(void *fb) {
-	static uint32_t busy {}, sequence {};
-	if (!__sync_bool_compare_and_swap(&busy, 0, 1)) return;
-	uint64_t r[128] {}, uptime;
-	clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, &r[0]);
-	r[2] = __sync_add_and_fetch(&sequence, 1);
-	auto s = callbackXE;
-	auto b = static_cast<uint8_t *>(fb);
-	auto ctl = *reinterpret_cast<uint8_t **>(b + 0x1D0);
-	auto lock = *reinterpret_cast<IORecursiveLock **>(b + 0x4220);
-	auto access = *reinterpret_cast<uint8_t **>(b + 0x4A40);
-	auto base = access ? *reinterpret_cast<volatile uint8_t **>(access + 0x50) : nullptr;
-	r[3] = 1;
-	if (ctl == s->tglObservationController && lock && base && r[0] > 30000000000ULL &&
-		*reinterpret_cast<uint32_t *>(access + 0x60) >= 0x74000 && s->tglPortByDDI && s->orgTGLPathLookup) {
-		IORecursiveLockLock(lock);
-		auto port = reinterpret_cast<void *(*)(uint32_t)>(s->tglPortByDDI)(4);
-		auto path = port ? static_cast<uint8_t *>(reinterpret_cast<void *(*)(void *)>(s->orgTGLPathLookup)(port)) : nullptr;
-		auto read = [&](uint32_t reg) { return *reinterpret_cast<volatile uint32_t *>(base + reg); };
-		auto write = [&](uint32_t reg, uint32_t value) {
-			FunctionCast(wrapTGLRegisterWrite, s->orgTGLRegisterWrite)(access, reg, value);
-			(void)read(reg);
-		};
-		r[4] = reinterpret_cast<uintptr_t>(path);
-		r[5] = read(0x60050); r[6] = read(0x44404); r[7] = read(0x4440C); r[8] = read(0x44408);
-		r[9] = read(0x70008); r[10] = read(0x70180); r[11] = read(0x7019C);
-		r[12] = read(0x60400); r[13] = read(0x64400); r[14] = read(0x4A480);
-		r[15] = read(0x70040); r[16] = read(0x49028); r[17] = read(0x70030);
-		r[3] = 2;
-		// Require an active matching native path, idle CRC unit and both CRC
-		// interrupt causes masked. Leave pre-existing interrupt state untouched.
-		if (path && *reinterpret_cast<void **>(path + 0x32B0) == fb &&
-			*reinterpret_cast<uint32_t *>(path + 0x3640) == 0 &&
-			*reinterpret_cast<void **>(path + 0x3648) == port &&
-			(r[5] & 0xF0000000) == 0 && (r[6] & 0x30000000) == 0x30000000 &&
-			(r[9] & 0xC0000000) == 0xC0000000 && (r[10] & 0x80000000) &&
-			(r[12] & 0x80000000) && (r[13] & 0x80000000)) {
-			r[3] = 0;
-			for (uint32_t tap=0; tap<2 && !r[3]; ++tap) {
-				// Own only enable/source fields. r54 read back bits24/25 after
-				// disable; their meaning is unverified, so preserve them.
-				write(0x60050, static_cast<uint32_t>(r[5]) | (tap ? 0xC0000000 : 0x80000000));
-				uint32_t frame = read(0x70040), advances = 0;
-				for (uint32_t waited=0; waited<250 && advances<7; ++waited) {
-					IOSleep(1);
-					const auto next = read(0x70040);
-					if (next == frame) continue;
-					frame = next; ++advances;
-					if (advances > 3) {
-						auto sample = r + 32 + (tap*4 + advances-4)*8;
-						clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, sample);
-						sample[1] = frame; sample[2] = read(0x60064); sample[3] = read(0x70040);
-						sample[4] = read(0x70000); sample[5] = read(0x60050);
-						sample[6] = read(0x44408); sample[7] = read(0x70008);
-					}
-				}
-				if (advances != 7) r[3] = 3 + tap;
-				write(0x60050, static_cast<uint32_t>(r[5]));
-			}
-			write(0x60050, static_cast<uint32_t>(r[5]));
-			// Clear only newly generated, still-masked CRC interrupt causes.
-			const uint32_t generated = read(0x44408) & ~static_cast<uint32_t>(r[8]) & 0x30000000;
-			if (generated && (read(0x44404) & 0x30000000) == 0x30000000) write(0x44408, generated);
-			r[18] = read(0x60050); r[19] = read(0x44408); r[20] = read(0x70040);
-			if ((r[18] & 0xF0000000) != (r[5] & 0xF0000000)) r[3] = 5;
-			r[21] = read(0x70008); r[22] = read(0x70180); r[23] = read(0x7019C);
-			r[24] = read(0x60400); r[25] = read(0x64400); r[26] = read(0x4A480);
-			r[27] = read(0x49028); r[28] = read(0x70030);
-		}
-		IORecursiveLockUnlock(lock);
-	}
-	clock_get_uptime(&uptime); absolutetime_to_nanoseconds(uptime, &r[1]);
-	char key[40]; snprintf(key, sizeof(key), "TGLCRCLast%u", static_cast<uint32_t>(r[2]) % 16);
-	IORegistryEntry::getRegistryRoot()->setProperty(key, r, sizeof(r));
-	__sync_lock_test_and_set(&busy, 0);
 }
 
 // Capture native upload and, at its final write, read it back under native lock.
@@ -14739,7 +14431,40 @@ void XE::wrapTGLSetDklDPMode(void *port) {
 // Linux v7.0 and the MI646 trace agree: TC PHY lane enables must be
 // staggered by >=100ns, including fixed legacy DP. The donor clears this
 // field in mode4. Fix the value at its original write, before polling idle.
+bool XE::tglNativeFiaAccess(void *port,uint32_t reg,uintptr_t caller,bool write,TGLNativeFia &mapping) {
+ auto self=callbackXE;
+ if(!self->tglNativeFiaReady || caller<self->tglNativeFiaBase ||
+  !self->tglNativeFiaContext.matches(reinterpret_cast<uintptr_t>(current_thread()),port))return false;
+ const auto pc=caller-self->tglNativeFiaBase;
+ return (write?TGLNativeFia::writeSite(pc,reg):TGLNativeFia::readSite(pc,reg)) &&
+  mapping.resolve(self->tglNativeFiaContext.ddi);
+}
+
+uint32_t XE::wrapTGLPortReadReg(void *port,uint32_t reg) {
+ TGLNativeFia mapping;
+ const bool mapped=tglNativeFiaAccess(port,reg,reinterpret_cast<uintptr_t>(__builtin_return_address(0)),false,mapping);
+ const auto physical=mapped?(reg==0x163890?mapping.fia.ready:mapping.fia.owned):reg;
+ auto value=FunctionCast(wrapTGLPortReadReg,callbackXE->orgTGLPortReadReg)(port,physical);
+ if(mapped){
+  value=mapping.logical(value);
+  __atomic_add_fetch(&callbackXE->tglNativeFiaReads,1,__ATOMIC_RELAXED);
+ }
+ return value;
+}
+
 void XE::wrapTGLPortWriteReg(void *port, uint32_t reg, uint32_t value) {
+ TGLNativeFia mapping;
+ if(tglNativeFiaAccess(port,reg,reinterpret_cast<uintptr_t>(__builtin_return_address(0)),true,mapping)) {
+  if(!mapping.identity()){
+   // The complete native transaction holds the shared mode lock. Preserve
+   // every other physical owner bit, including the sibling modular port.
+   const auto old=FunctionCast(wrapTGLPortReadReg,callbackXE->orgTGLPortReadReg)(port,mapping.fia.owned);
+   value=mapping.physical(old,value);
+  }
+  reg=mapping.fia.owned;
+  __atomic_add_fetch(&callbackXE->tglNativeFiaWrites,1,__ATOMIC_RELAXED);
+ }
+
 	uint32_t record[7] {};
 	bool observed = false;
 	if (value & 0x80000000U) {

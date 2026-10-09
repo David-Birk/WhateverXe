@@ -59,8 +59,8 @@ USB-C/TBT capability is not the current link mode.
 
 Without `tgl-tc-wiring`, TGL external DP entries with matching DDI/AUX routing
 can become probe candidates. The automatic backend currently admits TC1/TC2:
-the donor's native mode setter still uses FIA1, so later TC instances need a
-separate ownership implementation. Reversed lanes, inverted HPD, dock/LSPCON,
+the native mode transaction now maps qualified modular FIA coordinates for
+TC1–TC4, but this does not extend physical-port admission. Reversed lanes, inverted HPD, dock/LSPCON,
 shared or remapped AUX and internal panels are excluded. Explicit properties,
 including invalid ones, override automatic discovery.
 
@@ -72,3 +72,23 @@ the registry root are `WhateverXeTCDPCandidates` and `WhateverXeTCDPRegistered`
 (physical-DDI bitmasks). No CPU-to-board lookup is involved. `-tglnopanel` remains
 available. ROM scanning, automatic panel setup, DP++ protocol fallback and new
 Type-C transports are not implemented by this change.
+
+## Native FIA adapter and diagnostics
+
+The exact-donor mode0/4 transaction uses the TGL port coordinate model for its
+FIA ready/ownership accesses. A powered provider mode4 probe, the existing mode
+mutex, the current thread/port and five matched native call sites are required.
+TC1/TC2 retain the original MMIO/AUX sequence. TC3/TC4 bank/bit mapping and sibling
+bit preservation are CPU-tested, not live-qualified. TC5/TC6, unavailable-register
+handling, TC-cold boot handoff and repeated mode4 AUX acquisition remain separate
+work; this adapter does not provide a full mode lifetime implementation.
+
+`WhateverXeNativeFiaReady` reports routing qualification. `WhateverXeNativeFiaAccess`
+is six u32 values: schema1, physical DDI, FIA instance, bit mask, cumulative reads,
+and writes. Counts record adapter accesses, not hardware acknowledgement.
+Activation/path/engine observers now record software state without implicit
+fixed-port MMIO. DPCD records are 80 bytes: ns/thread u64 followed by sixteen u32;
+word12 is physical DDI, word13 is schema1. The new `WhateverXeDPCD*` properties
+replace `TGLDPCD4*`. Optimal-lane records include DDI at qword11.
+The obsolete `-tglcrc`, `-tglholdfirstd3`, and `-tglcursorpte` experiments were
+removed; these switches no longer perform register/AUX/PTE writes.
