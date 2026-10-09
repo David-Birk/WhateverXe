@@ -9,6 +9,7 @@
 
 #include "kern_xe.hpp"
 #include "kern_alderlake_n.hpp"
+#include "kern_xelp_device.hpp"
 #include "kern_xelp_memory_layout.hpp"
 #include "kern_alderlake_n_forcewake_irq.hpp"
 #include "kern_display13_boot.hpp"
@@ -59,6 +60,15 @@
 extern "C" const char version[];
 
 XE *XE::callbackXE;
+static IOPCIDevice *xelpSelectedGPU;
+static XELP::Profile xelpSelectedProfile;
+static bool xelpSelectedDevice(IOPCIDevice *pci) {
+    return pci && pci==xelpSelectedGPU && xelpSelectedProfile.admitted() &&
+        XELP::same(xelpSelectedProfile,XELP::deviceProfile(pci));
+}
+static bool xelpAlderLakeNDevice(IOPCIDevice *pci) {
+    return xelpSelectedProfile.family==XELP::Family::AlderLakeN && xelpSelectedDevice(pci);
+}
 // Detailed read-only display evidence is opt-in; control and first-fault
 // receipts remain active in the ordinary AlderLakeN profile.
 static bool display13TraceEnabled;
@@ -2567,62 +2577,43 @@ extern "C" __attribute__((naked, used)) void tglGuCDMAWriteBridge() {
 }
 
 void XE::init() {
-	callbackXE = this;
+    callbackXE = this;
+    // Register notifications before Lilu closes registration. Actual family
+    // selection waits for published PCI config space in processKernel.
+    lilu.onKextLoadForce(&kextAppleIntelTGLCompat);
+    lilu.onKextLoadForce(&kextIntelTGL);
+    lilu.onKextLoadForce(&kextIntelTGLFb);
+}
 
-	// AlderLakeN is commonly booted with an ICL CPUID override. Select the isolated
-	// bring-up entry explicitly; processKernel still checks physical PCI first.
-	adlnRequested = checkKernelArgument("-wex-adln");
-	if (adlnRequested) {
-        modDVMTCalcFix.available=true;
-		adlnKernelReady = !strcmp(version, "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64");
-		if (!adlnKernelReady) SYSLOG("igfx", "AlderLakeN rejected: requires exact 20G1443 kernel");
-		// Framebuffer and accelerator have separate admission. Display13 hooks
-		// use a thin entry, never the TGL Display12 processKextFull frame.
-		adlnNativeRequested = adlnKernelReady && checkKernelArgument("-wex-adln-native");
-		display13FramebufferRequested = adlnKernelReady && checkKernelArgument("-wex-display13");
-		display13TraceEnabled = display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
-		if (display13FramebufferRequested) {
-			currentFramebuffer = &kextIntelTGLFb;
-			lilu.onKextLoadForce(&kextAppleIntelTGLCompat);
-			lilu.onKextLoadForce(currentFramebuffer);
-		}
-		if (adlnNativeRequested) {
-			tglRequested = tglAcceleratorRequested = true;
-			currentGraphics = &kextIntelTGL;
-			currentFramebuffer = &kextIntelTGLFb;
-			lilu.onKextLoadForce(currentGraphics);
-		}
-		return;
-	}
-	// TGL-U/UP4 use the qualified donor automatically. The explicit selector
-	// remains useful with CPUID spoofing; physical PCI and exact ABI guards follow.
-	const auto &tglCPU = BaseDeviceInfo::get();
-	tglRequested = !checkKernelArgument("-wex-tgl-off") &&
-		(checkKernelArgument("-wex-tgl") || tglCPU.cpuModel == CPUInfo::CPU_MODEL_TIGERLAKE_U);
-	// Board input only: leave the donor panel intact unless explicitly absent.
-	tglNoPanel = checkKernelArgument("-wex-nopanel");
-	tglInactivePorts = tglRequested;
-	tglPG1Poll = tglRequested;
-	tglClockOrderRequested = tglRequested;
-	tglProgramEnabled = !checkKernelArgument("-wex-tgl-prog-off");
-	tglAcceleratorRequested = tglRequested;
-	tglTrainingLeaseRequested = tglRequested;
-	if (tglRequested) {
-		if (strcmp(version, "Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64") &&
-			strcmp(version, "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64")) {
-			SYSLOG("igfx", "TGL experiment rejected: requires exact DP1 or 20G1443 kernel");
-			return;
-		}
-		currentGraphics = &kextIntelTGL;
-		currentFramebuffer = &kextIntelTGLFb;
-		// TGL retains the same GGC calculation as ICL. Keep the existing opt-in.
-		modDVMTCalcFix.available = true;
-		lilu.onKextLoadForce(&kextAppleIntelTGLCompat);
-		lilu.onKextLoadForce(currentGraphics);
-		lilu.onKextLoadForce(currentFramebuffer);
-		return;
-	}
-
+void XE::selectProfile(const XELP::Profile &profile) {
+    xeProfile=profile;
+    adlnRequested=profile.admitted() && profile.family==XELP::Family::AlderLakeN;
+    adlnDetected=adlnRequested;
+    modDVMTCalcFix.available=profile.admitted();
+    if(adlnRequested) {
+        adlnKernelReady=!strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64");
+        adlnNativeRequested=adlnKernelReady && checkKernelArgument("-wex-adln-native");
+        display13FramebufferRequested=adlnKernelReady && checkKernelArgument("-wex-display13");
+        display13TraceEnabled=display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
+        if(display13FramebufferRequested || adlnNativeRequested)currentFramebuffer=&kextIntelTGLFb;
+        if(adlnNativeRequested) {
+            tglRequested=tglAcceleratorRequested=true;currentGraphics=&kextIntelTGL;
+        }
+        return;
+    }
+    tglRequested=profile.admitted() && profile.family==XELP::Family::TigerLake &&
+        !checkKernelArgument("-wex-tgl-off");
+    tglNoPanel=checkKernelArgument("-wex-nopanel");
+    tglInactivePorts=tglPG1Poll=tglClockOrderRequested=tglTrainingLeaseRequested=tglRequested;
+    tglProgramEnabled=!checkKernelArgument("-wex-tgl-prog-off");
+    tglAcceleratorRequested=tglRequested;
+    if(tglRequested) {
+        if(strcmp(version,"Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64") &&
+           strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64")) {
+            tglRequested=tglAcceleratorRequested=false;return;
+        }
+        currentGraphics=&kextIntelTGL;currentFramebuffer=&kextIntelTGLFb;
+    }
 }
 
 void XE::deinit() {}
@@ -2631,7 +2622,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97BringupVersion", 1ULL, 32);
 	pci->setProperty("N97NativeStartAllowed", false);
 	const auto revision = pci->configRead8(8);
-	const bool admitted = adlnRequested && adlnKernelReady && AlderLakeN::matches(pci->configRead32(0), revision);
+	const bool admitted = adlnRequested && adlnKernelReady && xelpAlderLakeNDevice(pci);
 	pci->setProperty("N97Admission", admitted);
 	pci->setProperty("N97PhysicalIdentity", pci->configRead32(0), 32);
 	pci->setProperty("N97PhysicalRevision", revision, 32);
@@ -2937,8 +2928,9 @@ bool XE::xelpInstallHostRPS(KernelPatcher &patcher,size_t index,mach_vm_address_
 void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	// This must precede tglLoadHDMIWiring, tglPrepareMMIOUC and TGL FIA reads.
 	auto physicalGPU = OSDynamicCast(IOPCIDevice, info->videoBuiltin);
-	xeProfile = physicalGPU ? XELP::identify(physicalGPU->configRead32(0),physicalGPU->configRead8(8)) : XELP::Profile {};
-	adlnDetected = xeProfile.family==XELP::Family::AlderLakeN;
+	selectProfile(XELP::deviceProfile(physicalGPU));
+    if(!xeProfile.admitted())return;
+    xelpSelectedGPU=physicalGPU;xelpSelectedProfile=xeProfile;
 	if (adlnDetected) {
         xelpReadFirmware(physicalGPU);
         tglDeviceId=physicalGPU->configRead16(2);
@@ -2953,10 +2945,6 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 			tglActive=tglVM.enabled && tglMMIOUCRouted && tglMMIOUCReady;
 			physicalGPU->setProperty("N97NativeKernelReady",tglActive);
 		}
-		return;
-	}
-	if (adlnRequested) {
-		SYSLOG("igfx", "AlderLakeN rejected: physical PCI identity mismatch");
 		return;
 	}
 	if (tglRequested) {
@@ -3474,7 +3462,7 @@ static Display13FBMemory::Readout display13FBInspectMemory(IOService *fb,bool bo
 	auto pci=controller ? OSDynamicCast(IOPCIDevice,controller->getProvider()) : nullptr;
 	if(pipe>=3 || !fb || !pci || !c.bridge.begun || c.bridge.state.faulted || c.memoryFaulted ||
 		!c.map || c.map->getLength()!=0x1000000 || !c.map->getVirtualAddress() ||
-		!AlderLakeN::matches(pci->configRead32(0),pci->configRead8(8)) ||
+		!xelpAlderLakeNDevice(pci) ||
 		!xelpMemoryMatches(pci) || !(pci->configRead16(4)&2))return r;
 	auto aperture=pci->getDeviceMemoryWithRegister(0x18);
 	if(!aperture || aperture->getLength()!=0x10000000 ||
@@ -4607,7 +4595,7 @@ void XE::wrapDisplay13FBMemoryInit(IOService *controller) {
 	const auto systemMapper=reinterpret_cast<uintptr_t>(IOMapper::gSystem);
 	const bool physicalOptions=mapperOptions==kIOMemoryMapperNone || (!mapperOptions && !systemMapper);
 	bool valid=s->display13FBGTTHooksReady && !g.controller && !g.faulted && pci && native && access &&
-		AlderLakeN::matches(pci->configRead32(0),pci->configRead8(8)) && xelpMemoryMatches(pci) &&
+		xelpAlderLakeNDevice(pci) && xelpMemoryMatches(pci) &&
 		(pci->configRead16(4)&2) && native->getLength()==0x1000000 && native->getVirtualAddress() &&
 		access->getMetaClass()->getClassSize()>=0x68 &&
 		Display13FBMemory::field<uintptr_t>(access,0x50)==native->getVirtualAddress() &&
@@ -5361,7 +5349,7 @@ bool XE::processDisplay13FramebufferABI(KernelPatcher &patcher,size_t index,mach
 bool XE::wrapDisplay13FramebufferInit(IOService *fb,IOService *controller,uint32_t index) {
 	auto pci=controller ? OSDynamicCast(IOPCIDevice,controller->getProvider()) : nullptr;
 	if(!callbackXE->display13FBABIReady || !fb || !pci || index>=3 ||
-		!AlderLakeN::matches(pci->configRead32(0),pci->configRead8(8)) ||
+		!xelpAlderLakeNDevice(pci) ||
 		controller->getMetaClass()->getClassSize()<0x1C20 || fb->getMetaClass()->getClassSize()<0x4B90)return false;
 	if(!FunctionCast(wrapDisplay13FramebufferInit,callbackXE->orgDisplay13FramebufferInit)(fb,controller,index))return false;
 	auto manager=Display13FBMemory::field<OSObject *>(controller,0xC40);
@@ -5398,7 +5386,7 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 		s->display13FBClockReady && s->display13FBIRQReady && s->display13FBMemoryHooksReady &&
 		s->display13FBEngineEnableHookReady && s->display13FBLifecycleHooksReady && s->display13FBDBUFHooksReady && s->display13FBWatermarkLayoutReady && s->display13FBWatermarkHooksReady && s->display13FBOutputHooksReady &&
 		s->display13FBBootHandoffHookReady && s->display13FBGTTHooksReady && s->display13FBMemoryReady && s->display13FBABIReady && s->display13FBTopologyHooksReady &&
-		pci && AlderLakeN::matches(pci->configRead32(0),pci->configRead8(8));
+		pci && xelpAlderLakeNDevice(pci);
 	that->setProperty("N97FramebufferBackendReady",ready);
 	if(!ready)return false;
 	auto property=provider->getProperty("xelp-hdmi-wiring");
@@ -6031,7 +6019,7 @@ Display13Clock::Readout XE::adlnClockReadout(IOService *controller) {
 	Display13Clock::Readout r;
 	auto pci=controller ? OSDynamicCast(IOPCIDevice,controller->getProvider()) : nullptr;
 	if(callbackXE->display13FBClockReadoutHooksReady && pci &&
-		AlderLakeN::matches(pci->configRead32(0),pci->configRead8(8)) && (pci->configRead16(4)&2) &&
+		xelpAlderLakeNDevice(pci) && (pci->configRead16(4)&2) &&
 		controller->getMetaClass()->getClassSize()>=0xEAC &&
 		*reinterpret_cast<void **>(reinterpret_cast<uint8_t *>(controller)+0xC60)==pci &&
 		*reinterpret_cast<void **>(reinterpret_cast<uint8_t *>(controller)+0xC40)) {
@@ -7339,7 +7327,7 @@ void XE::wrapAlderLakeNPowerInit(void *power,void *controller) {
 	auto pci=service ? OSDynamicCast(IOPCIDevice,service->getProvider()) : nullptr;
 	if(callbackXE->display13FBPowerReferencesReady && !c.controller && power && pci && !c.clockFaulted &&
 		c.clock.status==Display13Clock::Status::Complete &&
-		AlderLakeN::matches(pci->configRead32(0),pci->configRead8(8)) && (pci->configRead16(4)&2) &&
+		xelpAlderLakeNDevice(pci) && (pci->configRead16(4)&2) &&
 		Display13Power::objectAssociations(power,static_cast<OSObject *>(power)->getMetaClass()->getClassSize(),
 			controller,service->getMetaClass()->getClassSize())) {
 		auto bar=pci->getDeviceMemoryWithRegister(0x10);
@@ -7822,17 +7810,15 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
     }
     patcher.clearError();
    }
-			// Exact 20A2314a probe: native 9A40 remains accepted; the second
-			// comparison admits the physical 9A49 or 9A78 into the same GT2 SKU.
-			// Only 9A49 is hardware-tested; 9A40/9A78 are not yet qualified.
+			// Exact donor probe: admit the real PCI ID to the selected backend.
+			// device-id chooses policy; config-space identity is never rewritten.
 			// Native -allow3d passes the first development-ID filter; the second
 			// SKU selector must admit this hardware without spoofing its PCI ID.
 			bool skuReady = false;
 			if (tglAcceleratorRequested && checkKernelArgument("-allow3d")) {
 				static const uint8_t find[] {0x81,0xFF,0x86,0x80,0x48,0x9A,0x74,0x25};
 				uint8_t replace[] {0x81,0xFF,0x86,0x80,0x49,0x9A,0x74,0x25};
-				if (tglDeviceId == 0x9A78) replace[4] = 0x78;
-				if (adlnDetected) {replace[4]=tglDeviceId&0xFF;replace[5]=tglDeviceId>>8;}
+				replace[4]=tglDeviceId&0xFF;replace[5]=tglDeviceId>>8;
 				auto probe = patcher.solveSymbol<mach_vm_address_t>(index,
 					"__ZN16IntelAccelerator5probeEP9IOServicePi", address, size);
 				auto site = reinterpret_cast<uint8_t *>(probe + 0x34D);
@@ -7843,7 +7829,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 				}
 				// 46D1 is positive in the donor's signed PCI-ID split. Admit it
 				// to the same real selector2 branch qualified by the probe trial.
-				if (skuReady && adlnDetected) {
+				if (skuReady && (adlnDetected || xeProfile.overridden())) {
 					static const uint8_t findSplit[] {0x7F,0x15}, replaceSplit[] {0x90,0x90};
 					auto split=reinterpret_cast<uint8_t *>(address+0x23C25);
 					skuReady=!memcmp(split,findSplit,sizeof(findSplit));
@@ -9509,7 +9495,7 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
   // No parent/native start, private-object reads, engine work or fake success.
   auto pci=OSDynamicCast(IOPCIDevice,provider);
   const bool admitted=callbackXE->tglAcceleratorReady && pci &&
-   AlderLakeN::matches(pci->configRead32(0),pci->configRead8(8));
+   xelpAlderLakeNDevice(pci);
   IORegistryEntry::getRegistryRoot()->setProperty("N97LoadOnlyStartBlocked",true);
   IORegistryEntry::getRegistryRoot()->setProperty("N97LoadOnlyProviderReady",admitted);
   if (admitted && callbackXE->adlnParentBoundaryReady && checkKernelArgument("-wex-adln-parent-entry"))
@@ -9520,7 +9506,7 @@ bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
 	if (!callbackXE->tglAcceleratorReady) return false;
 	if (callbackXE->adlnDetected) {
 		auto pci=OSDynamicCast(IOPCIDevice,provider);
-		if (!callbackXE->adlnNativeReady || !pci || !AlderLakeN::matches(pci->configRead32(0),pci->configRead8(8))) return false;
+		if (!callbackXE->adlnNativeReady || !pci || !xelpAlderLakeNDevice(pci)) return false;
 		// Standalone startup never calls framebuffer start, which normally
 		// exposes these retained IRQ/submission records. Publish the same
 		// passive serializer here; it makes no driver calls or GPU reads.
@@ -9632,7 +9618,7 @@ bool XE::startAlderLakeNParentBoundary(IOService *that, IOService *provider) {
 bool XE::wrapAlderLakeNConfigureDevice(IOService *that, IOPCIDevice *provider) {
 	auto root=IORegistryEntry::getRegistryRoot();
 	const bool admitted=callbackXE->adlnParentBoundaryReady && provider &&
-	 AlderLakeN::matches(provider->configRead32(0),provider->configRead8(8));
+	 xelpAlderLakeNDevice(provider);
 	root->setProperty("N97ConfigureDeviceEntered",admitted);
 	if (admitted) {
 	 const auto bytes=reinterpret_cast<const uint8_t *>(that);
@@ -9902,7 +9888,7 @@ IOService *XE::wrapTGLAcceleratorProbe(IOService *that, IOService *provider, SIn
 	if (callbackXE->adlnDetected && checkKernelArgument("-wex-adln-load-only")) {
 		auto root=IORegistryEntry::getRegistryRoot();
 		const bool admitted=callbackXE->tglAcceleratorReady && pci &&
-			AlderLakeN::matches(identity,pci->configRead8(8));
+			xelpAlderLakeNDevice(pci);
 		root->setProperty("N97LoadOnlyProbeEntered",admitted);
 		if (!admitted) return nullptr;
 		// Qualify load/routing before executing the donor probe itself.
@@ -9918,8 +9904,7 @@ IOService *XE::wrapTGLAcceleratorProbe(IOService *that, IOService *provider, SIn
 	}
 	tglObserveAccelerator(that, 1, false, callbackXE->tglAcceleratorReady, identity);
 	if (!callbackXE->tglAcceleratorReady ||
-		(callbackXE->adlnDetected ? !AlderLakeN::matches(identity,pci ? pci->configRead8(8) : 0xFF) :
-		 (identity != 0x9A498086 && identity != 0x9A408086 && identity != 0x9A788086))) {
+		!xelpSelectedDevice(pci)) {
 		tglObserveAccelerator(that, 1, true, 0, identity);
 		return nullptr;
 	}
@@ -10013,7 +9998,7 @@ bool XE::wrapAlderLakeNNativeConfigure(IOService *that, IOPCIDevice *provider) {
 	// retain, factory replacement, or deliberate failure on the normal path.
 	auto root=IORegistryEntry::getRegistryRoot();
 	root->setProperty("N97NativeConfigureEntered",true);
-	if (!provider || !AlderLakeN::matches(provider->configRead32(0),provider->configRead8(8))) return false;
+	if (!provider || !xelpAlderLakeNDevice(provider)) return false;
 	auto bar=provider->getDeviceMemoryWithRegister(0x10);
 	auto map=bar && bar->getLength()==0x1000000 ? bar->map() : nullptr;
 	if (!map) return false;

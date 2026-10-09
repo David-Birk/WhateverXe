@@ -7,6 +7,7 @@
 #include <kern/clock.h>
 #include <mach/kmod.h>
 #include "AppleIntelTGLCompatPortProbe.hpp"
+#include "kern_xelp_device.hpp"
 
 extern "C" const char version[];
 
@@ -27,9 +28,8 @@ static bool hardwareAllowed(void *controller) {
     if (!controller) return false;
     auto service = static_cast<IOService *>(controller);
     auto pci = OSDynamicCast(IOPCIDevice, service->getProvider());
-    const uint32_t identity = pci ? pci->configRead32(0) : 0;
-    if (identity != 0x9A498086 && identity != 0x9A408086 && identity != 0x9A788086)
-        return false;
+    const auto profile=XELP::deviceProfile(pci);
+    if(!profile.admitted() || profile.family!=XELP::Family::TigerLake)return false;
     __atomic_store_n(&hardwareAccess, manager(controller), __ATOMIC_RELEASE);
     return true;
 }
@@ -53,7 +53,7 @@ extern "C" bool xelpConfigureDisplay(void *controller,const XELP::ProbeConfig *c
     auto service=static_cast<IOService *>(controller);
     if(service->getMetaClass()->getClassSize()<0x1C20)return false;
     auto pci=OSDynamicCast(IOPCIDevice,service->getProvider());
-    if(!pci || !XELP::same(config->profile,XELP::identify(pci->configRead32(0),pci->configRead8(8))))return false;
+    if(!pci || !XELP::same(config->profile,XELP::deviceProfile(pci)))return false;
     auto access=static_cast<OSObject *>(manager(controller));
     auto platform=field<uint8_t *>(controller,0xD40);
     auto map=OSDynamicCast(IOMemoryMap,field<OSObject *>(controller,0xC70));
@@ -77,7 +77,7 @@ extern "C" bool xelpConfigurePortProbe(void *controller,uint32_t abi,uint32_t se
     if(service->getMetaClass()->getClassSize()<0x1C20)return false;
     auto pci=OSDynamicCast(IOPCIDevice,service->getProvider());
     if(!pci)return false;
-    XELP::ProbeConfig config;config.profile=XELP::identify(pci->configRead32(0),pci->configRead8(8));
+    XELP::ProbeConfig config;config.profile=XELP::deviceProfile(pci);
     if(config.profile.family!=XELP::Family::AlderLakeN)return false;
     config.combo=selected;config.comboBackend=backend;
     return xelpConfigureDisplay(controller,&config);
@@ -227,11 +227,11 @@ extern "C" kern_return_t tglStart(kmod_info_t *, void *) {
         return KERN_FAILURE;
     // Backend selection is per physical owner/validated binding, not a global
     // boot policy. Register/DSB and port operations enforce their own guards.
-    IOLog("AppleIntelTGLCompat: revision 0.4.0 started, physical-owner/binding selection\n");
+    IOLog("AppleIntelTGLCompat: revision 0.5.0 started, physical-owner/binding selection\n");
     return KERN_SUCCESS;
 }
 extern "C" kern_return_t tglStop(kmod_info_t *, void *) { return KERN_FAILURE; }
-KMOD_EXPLICIT_DECL(org.b00t0x.AppleIntelTGLCompat, "0.4.0", tglStart, tglStop)
+KMOD_EXPLICIT_DECL(org.b00t0x.AppleIntelTGLCompat, "0.5.0", tglStart, tglStop)
 extern "C" {
 __attribute__((visibility("hidden"))) kmod_start_func_t *_realmain = tglStart;
 __attribute__((visibility("hidden"))) kmod_stop_func_t *_antimain = tglStop;

@@ -11,8 +11,10 @@ struct OSObject {
  Meta *getMetaClass(){return &meta;}
  void retain(){++retains;}
 };
+struct OSData:OSObject {uint32_t value{};size_t size=4;void *getBytesNoCopy(){return &value;}size_t getLength(){return size;}};
 struct IOService:OSObject {OSObject *provider {};OSObject *getProvider(){return provider;}};
-struct IOPCIDevice:OSObject {uint32_t identity {};uint8_t revision {};
+struct IOPCIDevice:OSObject {uint32_t identity {};uint8_t revision {};OSObject *property {};
+ OSObject *getProperty(const char *key){assert(!strcmp(key,"device-id"));return property;}
  uint32_t configRead32(unsigned r){assert(!r);return identity;}
  uint8_t configRead8(unsigned r){assert(r==8);return revision;}
 };
@@ -24,7 +26,8 @@ struct IOMemoryMap:OSObject {uintptr_t address {};uint64_t bytes {};
 // PROVIDER_SOURCE
 int main(int argc,char **argv) {
  assert(argc==2);const bool adln=!strncmp(argv[1],"adln",4);
- const bool legacy=!strcmp(argv[1],"adln-abi1");
+ const bool legacy=!strncmp(argv[1],"adln-abi1",9);
+ const bool fake=strstr(argv[1],"fake")!=nullptr;
  const bool rejected=!strcmp(argv[1],"unknown") || !strcmp(argv[1],"adln-revision");
  IOService controller;IOPCIDevice pci;OSObject access,port,foreign;IOMemoryMap map;
  std::vector<uint8_t> mmio(0x1000000);alignas(8) uint8_t platform[0x1C0] {};
@@ -34,6 +37,8 @@ int main(int argc,char **argv) {
  if(!strcmp(argv[1],"adln-16eu"))pci.identity=0x46D28086;
  if(!strcmp(argv[1],"unknown"))pci.identity=0x46A68086;
  if(!strcmp(argv[1],"adln-revision"))pci.revision=1;
+ OSData fakeID;
+ if(fake){pci.identity=0x12348086;fakeID.value=adln?0x46D2:0x9A49;pci.property=&fakeID;}
  controller.provider=&pci;platform[0x12]=9;
  map.address=reinterpret_cast<uintptr_t>(mmio.data());map.bytes=mmio.size();
  field<void *>(&controller,0xC40)=&access;field<void *>(&controller,0xD40)=platform;
@@ -50,7 +55,12 @@ int main(int argc,char **argv) {
  assert(hardwareAllowed(&controller)==physicalTGL);
  assert(tglProbePort(&port)==(physicalTGL?1U:0U));
  field<void *>(&port,0x578)=&foreign;assert(!tglProbePort(&port));field<void *>(&port,0x578)=&access;
- XELP::ProbeConfig config;config.profile=XELP::identify(pci.identity,pci.revision);
+ XELP::ProbeConfig config;config.profile=XELP::deviceProfile(&pci);
+ xelpSelectedGPU=&pci;xelpSelectedProfile=config.profile;
+ assert(xelpSelectedDevice(&pci)==config.profile.admitted());
+ assert(xelpAlderLakeNDevice(&pci)==(adln && !rejected));
+ IOPCIDevice foreignPCI;foreignPCI.identity=pci.identity;foreignPCI.revision=pci.revision;foreignPCI.property=pci.property;
+ assert(!xelpSelectedDevice(&foreignPCI));
  config.combo=3;config.comboBackend=adln?3:7;config.legacy=adln?0:0x1F8;config.legacyBackend=adln?0:0x1F8;
  // The contract derives generation from physical identity, not boot args.
  assert(!xelpConfigurePortProbe(&controller,2,3,3));
@@ -70,6 +80,11 @@ int main(int argc,char **argv) {
  pci.identity^=0x10000;assert(!xelpConfigureDisplay(&controller,&config));pci.identity^=0x10000;
  map.address++;assert(!xelpConfigureDisplay(&controller,&config));map.address--;
  assert(!controller.retains && !access.retains && !map.retains && !probeBindingState);
+ if(fake) {
+  auto lied=config;lied.profile.identity=0x99998086;assert(!xelpConfigureDisplay(&controller,&lied));
+  pci.property=&foreign;assert(!xelpSelectedDevice(&pci));assert(!xelpConfigureDisplay(&controller,&config));pci.property=&fakeID;
+  const auto original=fakeID.value;fakeID.value=0xFFFF;assert(!xelpConfigureDisplay(&controller,&config));fakeID.value=original;
+ }
  if(legacy)assert(xelpConfigurePortProbe(&controller,1,3,3));
  else assert(xelpConfigureDisplay(&controller,&config));
  assert(controller.retains==1 && access.retains==1 && map.retains==1);

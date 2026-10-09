@@ -1,38 +1,51 @@
-// Shared WEG/provider CPU contract. Recognition is not runtime qualification.
+// Shared WhateverXe/provider CPU contract. Recognition is not runtime qualification.
 // Keep hardware capability, donor ABI and board transport as separate inputs.
 #ifndef KERN_XELP_PLATFORM_HPP
 #define KERN_XELP_PLATFORM_HPP
 #include <stdint.h>
 #include <stddef.h>
+#include "kern_xelp_devices.hpp"
 namespace XELP {
-enum class Family : uint32_t { Unknown, TigerLake, AlderLakeN };
-enum class Display : uint32_t { Unknown, XeD = 12, XeLPD = 13 };
-enum class GT : uint32_t { Unknown, TGLGT2, TGLG4, ADLNSmall };
-enum class Donor : uint32_t { Unknown, C004FC1A = 1 };
 struct Profile {
-    uint32_t identity {}, revision {};
+    uint32_t identity {}, revision {}; // Physical config-space identity, never spoofed.
     Family family {Family::Unknown};
     Display display {Display::Unknown};
     GT gt {GT::Unknown};
     Donor donor {Donor::Unknown};
-    bool admitted() const {return family!=Family::Unknown && donor==Donor::C004FC1A &&
+    uint32_t effectiveIdentity {}; // Table selector; may come from device-id.
+    bool overridden() const {return identity!=effectiveIdentity;}
+    bool admitted() const {return (identity&0xFFFF)==0x8086 && revision<=255 &&
+        donor==Donor::C004FC1A && gt!=GT::Unknown &&
         (family!=Family::AlderLakeN || revision==0);}
 };
-inline Profile identify(uint32_t pci,uint32_t revision) {
-    Profile p;p.identity=pci;p.revision=revision;
-    if((pci&0xFFFF)!=0x8086 || revision>255)return p;
-    const auto id=pci>>16;
-    if(id==0x9A49 || id==0x9A40 || id==0x9A78) {
-        p.family=Family::TigerLake;p.display=Display::XeD;
-        p.gt=id==0x9A78 ? GT::TGLG4 : GT::TGLGT2;
-    } else if(id>=0x46D0 && id<=0x46D4) {
-        p.family=Family::AlderLakeN;p.display=Display::XeLPD;p.gt=GT::ADLNSmall;
-    } else return p;
-    p.donor=Donor::C004FC1A;return p;
+inline Profile identify(uint32_t physical,uint32_t revision,uint32_t effective) {
+    Profile p;p.identity=physical;p.revision=revision;p.effectiveIdentity=effective;
+    if((physical&0xFFFF)!=0x8086 || revision>255)return p;
+    const auto entry=deviceEntry(effective);if(!entry)return p;
+    p.family=entry->family;p.display=entry->display;p.gt=entry->backend;
+    if(p.gt!=GT::Unknown)p.donor=Donor::C004FC1A;
+    return p;
+}
+inline Profile identify(uint32_t pci,uint32_t revision) {return identify(pci,revision,pci);}
+// IOPCIFamily also publishes device-id when no override is injected. Equal
+// values are ordinary physical selection. An invalid explicit value never
+// silently falls back to a different backend.
+inline Profile select(uint32_t pci,uint32_t revision,bool present,const void *data,size_t size) {
+    if(!present)return identify(pci,revision);
+    if(!data || size!=4)return identify(pci,revision,0);
+    const auto b=static_cast<const uint8_t *>(data);
+    const uint32_t id=uint32_t(b[0])|(uint32_t(b[1])<<8)|(uint32_t(b[2])<<16)|(uint32_t(b[3])<<24);
+    if(!id || id>=0xFFFF)return identify(pci,revision,0);
+    return identify(pci,revision,(id<<16)|(pci&0xFFFF));
 }
 inline bool same(const Profile &a,const Profile &b) {
     return a.identity==b.identity && a.revision==b.revision && a.family==b.family &&
-        a.display==b.display && a.gt==b.gt && a.donor==b.donor;
+        a.display==b.display && a.gt==b.gt && a.donor==b.donor && a.effectiveIdentity==b.effectiveIdentity;
+}
+inline const char *model(const Profile &p) {
+    // Prefer the actual known product name even when trying another backend.
+    auto entry=deviceEntry(p.identity);if(!entry)entry=deviceEntry(p.effectiveIdentity);
+    return entry ? entry->model : nullptr;
 }
 constexpr uint32_t PortCount=9,PortMask=(1U<<PortCount)-1,PipeCount=3;
 // A validated native association. The adapter validates transport-specific
@@ -46,17 +59,17 @@ struct NativePorts {
             config==static_cast<const uint8_t *>(platform)+0x20+24*ddi;
     }
 };
-// ABI2 binds a profile and immutable probe policy, not mutable connection state.
+// ABI3 includes physical/effective identity and binds a profile and immutable probe policy, not mutable connection state.
 // legacy permits probing for mode4; it does not force mode4 or classify a
 // USB-C-capable connector as physically fixed DP. The provider still checks FIA.
 // Type-C intent is represented but not admitted by either current backend.
 struct ProbeConfig {
-    uint32_t abi {2},bytes {sizeof(ProbeConfig)};
+    uint32_t abi {3},bytes {sizeof(ProbeConfig)};
     Profile profile;
     uint32_t combo {},legacy {},typeC {},excluded {},comboBackend {},legacyBackend {};
     bool valid() const {
-        if(abi!=2 || bytes!=sizeof(ProbeConfig) || !profile.admitted() ||
-           !same(profile,identify(profile.identity,profile.revision)))return false;
+        if(abi!=3 || bytes!=sizeof(ProbeConfig) || !profile.admitted() ||
+           !same(profile,identify(profile.identity,profile.revision,profile.effectiveIdentity)))return false;
         if((combo&~7U) || ((legacy|typeC|excluded|legacyBackend)&~0x1F8U) ||
            (comboBackend&~7U) || (legacy&typeC) || (legacy&excluded) || (typeC&excluded))return false;
         if(profile.display==Display::XeD)return comboBackend==7;

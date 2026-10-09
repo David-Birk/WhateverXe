@@ -33,6 +33,7 @@ namespace Display13WM { struct Latch; }
 class XE {
 public:
 	void init();
+    void selectProfile(const XELP::Profile &profile);
 	void deinit();
 
 	/**

@@ -12,18 +12,18 @@ def main():
  for n in ['WhateverXe','AppleIntelTGLCompat']:assert sha(a.build/(n+'.kext')/'Contents/MacOS'/n)==build[n]['sha256']
  assert not a.output.exists();a.output.mkdir(parents=True)
  for bundle in a.baseline.iterdir():
-  if bundle.is_dir() and bundle.name!='TGLCompat.kext':shutil.copytree(bundle,a.output/bundle.name,symlinks=True)
+  if bundle.is_dir() and bundle.name not in ['TGLCompat.kext','AppleIntelTGLCompat.kext']:shutil.copytree(bundle,a.output/bundle.name,symlinks=True)
  provider=a.build/'AppleIntelTGLCompat.kext';info=plistlib.loads((provider/'Contents/Info.plist').read_bytes());assert info['CFBundleIdentifier']==NEW
  shutil.copytree(provider,a.output/provider.name,symlinks=True)
  modified=[]
  for f in a.output.glob('*/Contents/Info.plist'):
   d=plistlib.loads(f.read_bytes());libs=d.get('OSBundleLibraries',{})
-  if OLD in libs:
-   del libs[OLD];libs[NEW]=info['CFBundleVersion'];f.write_bytes(plistlib.dumps(d));modified.append(str(f.relative_to(a.output)))
+  if OLD in libs or NEW in libs:
+   libs.pop(OLD,None);libs[NEW]=info['CFBundleVersion'];f.write_bytes(plistlib.dumps(d));modified.append(str(f.relative_to(a.output)))
  files={str(p.relative_to(a.output)):sha(p) for p in sorted(a.output.rglob('*')) if p.is_file()}
  unchanged=[k for k in baseline['files'] if k in files and baseline['files'][k]==files[k]]
  for k in baseline['files']:
   if k.endswith('/Contents/MacOS/AppleIntelTGLGraphics') or k.endswith('/Contents/MacOS/AppleIntelTGLGraphicsFramebuffer'):assert k in unchanged
- manifest={'scope':'WhateverXe extraction: provider identity migration only; unchanged Apple executables/userland','target_build':'20G1443','files':files,'provider':build['AppleIntelTGLCompat'],'plugin':build['WhateverXe'],'dependency_plists':modified,'unchanged_baseline_files':len(unchanged),'baseline_files':baseline['files'],'qualification':'candidate; live results recorded separately'}
+ manifest={'scope':'WhateverXe extraction: provider update; unchanged Apple executables/userland','target_build':'20G1443','files':files,'provider':build['AppleIntelTGLCompat'],'plugin':build['WhateverXe'],'dependency_plists':modified,'unchanged_baseline_files':len(unchanged),'baseline_files':baseline['files'],'qualification':'candidate; live results recorded separately'}
  (a.output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n');print(json.dumps({'files':len(files),'unchanged':len(unchanged),'dependency_plists':modified}))
 if __name__=='__main__':main()

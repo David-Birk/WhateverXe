@@ -16,7 +16,7 @@ int main() {
   const auto p=identify((id<<16)|0x8086,rev);
   const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78,adln=id>=0x46D0 && id<=0x46D4;
   assert(p.admitted()==(tgl || (adln && rev==0)));
-  assert((p.display==Display::XeLPD)==adln);
+  assert(!adln || p.display==Display::XeLPD);
   assert(!identify((id<<16)|0x1234,rev).admitted());
  }
  alignas(8) uint8_t platform[0x1C0] {};

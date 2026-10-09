@@ -1,6 +1,6 @@
 // Copyright © 2018 vit9696. Derived from WhateverGreen (BSD-3-Clause).
 #include "kern_host.hpp"
-#include "kern_xelp_platform.hpp"
+#include "kern_xelp_device.hpp"
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_iokit.hpp>
 #include <IOKit/pci/IOPCIDevice.h>
@@ -24,7 +24,15 @@ void XeHost::processKernel(KernelPatcher &patcher) {
  auto gpu=OSDynamicCast(IOPCIDevice,info->videoBuiltin);
  // Match WEG ordering: PCI config reads require a published IOPCIDevice.
  const bool published=gpu && WIOKit::awaitPublishing(gpu);
- active=published && XELP::identify(gpu->configRead32(0),gpu->configRead8(8)).admitted();
+ const auto profile=published ? XELP::deviceProfile(gpu) : XELP::Profile {};
+ active=profile.admitted();
+ if(published) {
+  uint32_t selection[] {1,profile.identity,profile.revision,profile.effectiveIdentity,
+   static_cast<uint32_t>(profile.family),static_cast<uint32_t>(profile.display),
+   static_cast<uint32_t>(profile.gt),active};
+  gpu->setProperty("WhateverXeDeviceSelection",selection,sizeof(selection));
+  if(!gpu->getProperty("model"))if(const auto name=XELP::model(profile))gpu->setProperty("model",const_cast<char *>(name),strlen(name)+1);
+ }
  if(active) {
   // Xe admission reads physical PCI identity. Do not install WEG's ID spoof hooks.
   if(info->firmwareVendor!=DeviceInfo::FirmwareVendor::Apple) {

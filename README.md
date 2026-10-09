@@ -4,7 +4,7 @@ Xe-LP compatibility plugin for Lilu, extracted from the Xe development fork of W
 Bundle: `WhateverXe.kext`, identifier: `org.b00t0x.WhateverXe`.
 Provider: `AppleIntelTGLCompat.kext`, identifier: `org.b00t0x.AppleIntelTGLCompat`.
 
-The provider supplies missing methods for the exact Apple TGL donor; it is not a GPU driver by itself. Existing Apple kernel/userland donors remain required. No new GPU or transport is admitted by this extraction. AppleIntelTGLCompat reads no boot arguments: TGL-specific operations check physical PCI identity, and shared port probing uses the profile and policy registered by WEX and independently validated by the provider.
+The provider supplies missing methods for the exact Apple TGL donor; it is not a GPU driver by itself. Existing Apple kernel/userland donors remain required. No new GPU or transport is admitted by this extraction. AppleIntelTGLCompat reads no boot arguments: TGL-specific operations and shared port probing use the common physical/effective PCI profile, independently validated by the provider. See [device selection and names](docs/device-selection.md).
 
 Upstream WhateverGreen copyright and BSD license are retained. See LICENSE.txt and docs/extraction-map.json. Lilu and MacKernelSDK are separate build dependencies, not vendored source.
 
@@ -24,7 +24,7 @@ The optional test donor must be the exact c004fc1a framebuffer. Build outputs in
 
 The historical `TGLCPUMemoryProbe` and `TGLLinkProbe` kexts are diagnostic tools, not runtime dependencies of WhateverXe. The normal root payload excludes both. When migrating an older installation, remove separately installed probe bundles and exclude their identifiers from the rebuilt KC; removing files alone does not remove cached kexts. Verify normal driver loading after removal, since TGLLinkProbe previously triggered dependency loading. MI646 removal results and recovery assets are recorded in the enclosing project's Xe records; other machines require their own validation.
 
-All WhateverXe-owned boot switches use `wex`: plugin controls are `-wexoff`, `-wexdbg`, and `-wexbeta`; features include `-wex-adln`, `-wex-adln-native`, `-wex-display13`, and `-wex-nopanel`. Old names and N97 aliases are no longer accepted. See [the complete option and migration guide](docs/boot-arguments.md) before upgrading both kexts and the boot configuration. WEG-shared `-igfxdvmt`/`gfxrst=` and native Apple donor options retain their names. Physical PCI/revision and exact kernel/donor checks remain authoritative.
+All WhateverXe-owned boot switches use `wex`: plugin controls are `-wexoff`, `-wexdbg`, and `-wexbeta`; features include `-wex-adln-native`, `-wex-display13`, and `-wex-nopanel`. Old names and N97 aliases are no longer accepted. Family selection now uses the device table/DeviceProperties without `-wex-adln` or `-wex-tgl`. See [the complete option and migration guide](docs/boot-arguments.md) before upgrading both kexts and the boot configuration. WEG-shared `-igfxdvmt`/`gfxrst=` and native Apple donor options retain their names. Physical PCI/revision and exact kernel/donor checks remain authoritative.
 
 Disable the Xe development WEG when enabling WhateverXe. This revision has no qualified WEG co-installation mode, including mixed-GPU configurations. Its boot framebuffer hook is global. Do not enable both and rely on load order.
 

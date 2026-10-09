@@ -5,9 +5,9 @@ All WhateverXe-owned arguments use `wex`. The only accepted spelling is the new 
 ## Normal configuration
 
 - `-wexoff`, `-wexdbg`, `-wexbeta`: plugin disable, debug and unsupported-OS opt-in. Beta does not bypass exact kernel/donor checks. Disabling WEX while leaving its Apple donor active is not a safe recovery configuration.
-- `-wex-tgl`: explicit Tiger Lake selection (automatic on the already supported TGL CPU model). `-wex-tgl-off` disables that selection.
+- Family selection is automatic from PCI identity and the shared device table, with optional `device-id` override. `-wex-tgl-off` disables the selected TGL path.
 - `-wex-nopanel`: omit the donor internal panel on the TGL path. The existing Display13 path has separate topology; this switch does not newly affect it.
-- `-wex-adln -wex-display13 -wex-adln-native -wex-adln-rcs-profile`: existing Alder-N native configuration under new names. AppleIntelTGLCompat consumes no boot arguments; WEX passes a validated profile and port policy through the existing binding API. These remain explicit admission/profile switches, not new hardware support.
+- `-wex-display13 -wex-adln-native -wex-adln-rcs-profile`: existing Alder-N native configuration under new names. AppleIntelTGLCompat consumes no boot arguments; WEX passes a validated profile and port policy through the existing binding API. These remain feature/profile switches; family selection needs no boot argument.
 
 WEG-shared options remain `-igfxdvmt` and `gfxrst=`. Native Apple donor options `-allow3d` and `-disablegfxfirmware` also retain their names: renaming only our checks would not change what the donor reads. macOS/Lilu options are outside this namespace. DeviceProperties, IORegistry diagnostic names and the `adln-qtrace` executable name are unchanged.
 
@@ -18,8 +18,10 @@ When migrating from the old argument-dependent provider, update WhateverXe, Appl
 T8 equivalent of the previously qualified arguments (the inherited no-panel flag is retained, although inactive on Display13):
 
 ```text
-debug=0x100 keepsyms=1 amfi=0x80 -wex-nopanel -allow3d -disablegfxfirmware -v -wex-adln -wex-display13 -wex-adln-native -wex-adln-rcs-profile -igfxdvmt
+debug=0x100 keepsyms=1 amfi=0x80 -wex-nopanel -allow3d -disablegfxfirmware -v -wex-display13 -wex-adln-native -wex-adln-rcs-profile -igfxdvmt
 ```
+
+The family selectors `-wex-adln` and `-wex-tgl`, as well as their earlier spellings, have been removed. See [device selection](device-selection.md).
 
 ## Full rename table
 
@@ -57,8 +59,6 @@ Options beyond the normal configuration above are existing diagnostic/bring-up o
 | `-wex-adln-task-stage` | `-adlntaskstage`, `-n97taskstage` |
 | `-wex-display13` | `-display13`, `-n97display13` |
 | `-wex-display13-trace` | `-display13trace`, `-n97displaytrace` |
-| `-wex-adln` | `-igfxadln`, `-igfxn97` |
-| `-wex-tgl` | `-igfxtgl` |
 | `-wex-tgl-off` | `-igfxtgloff` |
 | `-wex-nopanel` | `-tglnopanel` |
 | `-wex-tgl-prog-off` | `-tglprogoff` |
@@ -75,14 +75,14 @@ Options beyond the normal configuration above are existing diagnostic/bring-up o
 AppleIntelTGLCompat has no user-facing options. Its exact-kernel gate remains at
 startup, and backend selection happens on the actual owner or registered binding:
 
-- Register and DSB methods retain the existing physical TGL PCI allowlist.
-- WEX chooses admission and wiring, then passes its profile and port policy to
-  `xelpConfigureDisplay`. The provider validates physical PCI/revision, ABI,
+- Register and DSB methods require a TGL backend selected by the shared PCI/DeviceProperties resolver.
+- WEX chooses admission and wiring, then passes its physical/effective profile and port policy to
+  `xelpConfigureDisplay` (ABI3). The provider independently resolves PCI/DeviceProperties and validates the ABI,
   controller/manager/map and platform before pinning the association.
 - Without a binding, port probing retains the old TGL fallback only for the
-  manager previously established by a physical TGL controller operation.
-  Unbound Alder-N and unknown owners return mode0; no generation is guessed.
-- The legacy ABI1 entry validates the physical Alder-N profile and feeds the same
+  manager previously established by a controller operation using a validated TGL profile.
+  Unbound owners without such an association return mode0; no generation is guessed.
+- The legacy ABI1 entry resolves and validates the Alder-N profile and feeds the same
   binding implementation, with no boot-argument prerequisite.
 
 This removes duplicated boot policy; it does not make the provider a standalone

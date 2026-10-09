@@ -29,6 +29,7 @@ assert {name for name, _ in rows} == used - external
 removed = [name for _, text in rows for name in re.findall(r'`([^`]+)`', text)]
 assert not set(removed) & used
 init = xe[xe.index('void XE::init() {'):xe.index('void XE::deinit()')]
+assert 'BaseDeviceInfo' not in init and 'CPU_MODEL' not in init
 entry = re.search(r'extern "C" kern_return_t tglStart\(.*?\n\}', provider, re.S).group()
 fixture = r'''
 #include <cassert>
@@ -36,21 +37,18 @@ fixture = r'''
 #include <set>
 #include <string>
 #include <initializer_list>
+#include "kern_xelp_platform.hpp"
 static const char *qualified = "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64";
 static const char *version = qualified;
 static std::set<std::string> args;
 bool checkKernelArgument(const char *name) { return args.count(name); }
 #define SYSLOG(...) ((void)0)
 #define IOLog(...) ((void)0)
-namespace CPUInfo { enum { CPU_MODEL_TIGERLAKE_U = 1 }; }
-struct BaseDeviceInfo {
- int cpuModel = 0;
- static BaseDeviceInfo &get() { static BaseDeviceInfo info; return info; }
-};
 static int kextIntelTGLFb, kextAppleIntelTGLCompat, kextIntelTGL;
 static struct { void onKextLoadForce(int *) {} } lilu;
 struct XE {
- bool adlnRequested=false, adlnKernelReady=false, adlnNativeRequested=false;
+ XELP::Profile xeProfile;
+ bool adlnRequested=false, adlnDetected=false, adlnKernelReady=false, adlnNativeRequested=false;
  bool display13FramebufferRequested=false, display13TraceEnabled=false;
  bool tglRequested=false, tglAcceleratorRequested=false, tglNoPanel=false;
  bool tglInactivePorts=false, tglPG1Poll=false, tglClockOrderRequested=false;
@@ -58,44 +56,45 @@ struct XE {
  struct { bool available=false; } modDVMTCalcFix;
  int *currentGraphics=nullptr, *currentFramebuffer=nullptr;
  void init();
+ void selectProfile(const XELP::Profile &);
 };
 static XE *callbackXE;
 using kern_return_t = int;
 struct kmod_info_t {};
 static constexpr int KERN_FAILURE=5, KERN_SUCCESS=0;
 // ACTUAL_SOURCE
-static XE boot(std::initializer_list<const char *> names, int model=0) {
+static XE boot(std::initializer_list<const char *> names, uint32_t pci=0x46D28086,uint32_t effective=0) {
  args.clear(); for (const auto name:names) args.insert(name);
- BaseDeviceInfo::get().cpuModel=model;
- XE xe; xe.init(); assert(tglStart(nullptr,nullptr)==KERN_SUCCESS);
+ XE xe; xe.init(); xe.selectProfile(XELP::identify(pci,0,effective?effective:pci)); assert(tglStart(nullptr,nullptr)==KERN_SUCCESS);
  return xe;
 }
 int main() {
- auto xe=boot({"-wex-adln","-wex-display13","-wex-adln-native","-wex-adln-rcs-profile"});
+ // Physical selection needs no CPUID or family-selector boot argument.
+ auto xe=boot({"-wex-display13","-wex-adln-native","-wex-adln-rcs-profile"});
  assert(xe.adlnRequested && xe.adlnKernelReady && xe.adlnNativeRequested && xe.display13FramebufferRequested);
- assert(xe.tglAcceleratorRequested && !xe.display13TraceEnabled);
- xe=boot({"-wex-adln","-wex-display13","-wex-display13-trace"});
+ xe=boot({"-wex-display13","-wex-display13-trace"});
  assert(xe.display13TraceEnabled && !xe.adlnNativeRequested);
- xe=boot({"-wex-adln","-n97native","-adlnnative","-n97display13","-display13"});
- assert(!xe.adlnNativeRequested && !xe.display13FramebufferRequested);
- for(const char *obsolete:{"-igfxn97","-igfxadln"}) {
-  xe=boot({obsolete,"-wex-adln-native","-wex-display13"});
+ xe=boot({"-n97native","-adlnnative","-n97display13","-display13"});
+ assert(xe.adlnRequested && !xe.adlnNativeRequested && !xe.display13FramebufferRequested);
+ for(const char *obsolete:{"-igfxn97","-igfxadln","-wex-adln","-wex-tgl"}) {
+  xe=boot({obsolete,"-wex-adln-native","-wex-display13"},0x12348086);
   assert(!xe.adlnRequested && !xe.tglRequested && !xe.adlnNativeRequested);
  }
- xe=boot({},CPUInfo::CPU_MODEL_TIGERLAKE_U);
+ xe=boot({},0x9A498086);
  assert(xe.tglRequested && xe.tglAcceleratorRequested && xe.tglProgramEnabled && !xe.tglNoPanel);
- xe=boot({"-wex-tgl","-wex-nopanel","-wex-tgl-prog-off"});
+ xe=boot({"-wex-nopanel","-wex-tgl-prog-off"},0x9A408086);
  assert(xe.tglRequested && xe.tglNoPanel && !xe.tglProgramEnabled);
- xe=boot({"-wex-tgl-off"},CPUInfo::CPU_MODEL_TIGERLAKE_U);
- assert(!xe.tglRequested);
- xe=boot({"-igfxtgl","-tglnopanel","-tglprogoff"});
- assert(!xe.tglRequested && !xe.tglNoPanel && xe.tglProgramEnabled);
- xe=boot({"-igfxtgloff"},CPUInfo::CPU_MODEL_TIGERLAKE_U);
- assert(xe.tglRequested);
- args={"-wex-adln","-wex-display13","-wex-adln-native"};
- version="unqualified"; xe=XE{}; xe.init();
+ xe=boot({"-wex-tgl-off"},0x9A498086);assert(!xe.tglRequested);
+ xe=boot({"-wex-adln-native","-wex-display13"},0x12348086,0x46D28086);
+ assert(xe.adlnRequested && xe.adlnNativeRequested && xe.xeProfile.identity==0x12348086);
+ xe=boot({},0x12348086,0x9A498086);assert(xe.tglRequested);
+ xe=boot({},0x46A68086);assert(!xe.tglRequested && !xe.adlnRequested);
+ args={"-wex-display13","-wex-adln-native"};version="unqualified";
+ xe=XE{};xe.init();xe.selectProfile(XELP::identify(0x46D28086,0));
  assert(xe.adlnRequested && !xe.adlnKernelReady && !xe.adlnNativeRequested && !xe.display13FramebufferRequested);
  assert(tglStart(nullptr,nullptr)==KERN_FAILURE);
+ xe=XE{};xe.selectProfile(XELP::identify(0x9A498086,0));assert(!xe.tglRequested);
+
 }
 '''.replace('// ACTUAL_SOURCE', init + entry)
 with tempfile.TemporaryDirectory(prefix='wex-boot-args-') as directory:
@@ -103,6 +102,6 @@ with tempfile.TemporaryDirectory(prefix='wex-boot-args-') as directory:
     cpp, exe = directory / 'test.cpp', directory / 'test'
     cpp.write_text(fixture)
     subprocess.run(['clang++', '-std=c++17', '-O1', '-g', '-fsanitize=address,undefined',
-                    '-fno-omit-frame-pointer', str(cpp), '-o', str(exe)], check=True)
+                    '-fno-omit-frame-pointer', '-I'+str(root/'WhateverXe'), str(cpp), '-o', str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
 print(f'boot namespace: {len(used-external)} options, {len(removed)} removed spellings; plugin/provider startup passed')

@@ -14,7 +14,7 @@ def main():
  sdk=a.sdk.resolve();lilu=a.lilu.resolve()/'Contents/Resources'
  base=['xcrun','clang++','-arch','x86_64','-std=c++17',('-O2' if a.release else '-O0'),'-g','-mkernel','-fapple-kext','-fno-exceptions','-fno-rtti','-fno-stack-protector','-fno-builtin','-fno-asynchronous-unwind-tables','-mno-red-zone','-nostdinc','-DKERNEL','-DKERNEL_PRIVATE','-D__APPLE__','-D__MACH__','-I'+str(sdk/'Headers'),'-I'+str(lilu),'-I'+str(ROOT/'WhateverXe'),'-mmacosx-version-min=10.15','-Wall','-Wextra','-Wno-unused-parameter','-Wno-deprecated-declarations','-Wno-vla','-Wno-ossharedptr-misuse']
  manifest={}
- for name,version,sources in [('WhateverXe','0.1.0',sorted((ROOT/'WhateverXe').glob('*.cpp'))+[lilu/'Library/plugin_start.cpp']),('AppleIntelTGLCompat','0.4.0',[ROOT/'AppleIntelTGLCompat/AppleIntelTGLCompat.cpp'])]:
+ for name,version,sources in [('WhateverXe','0.2.0',sorted((ROOT/'WhateverXe').glob('*.cpp'))+[lilu/'Library/plugin_start.cpp']),('AppleIntelTGLCompat','0.5.0',[ROOT/'AppleIntelTGLCompat/AppleIntelTGLCompat.cpp'])]:
   bundle=out/(name+'.kext')/'Contents';(bundle/'MacOS').mkdir(parents=True,exist_ok=True);objdir=out/name;objdir.mkdir(exist_ok=True)
   objects=[]
   for source in sources:
