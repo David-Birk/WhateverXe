@@ -42,7 +42,16 @@ was added. A subsequent physical unplug/replug of Combo B and then A, once each
 with the peer connected, preserved the peer display and restored both outputs
 and Metal without GPU/resource/power faults. This does not qualify all-output
 disconnect, repeated hotplug, H.264, system sleep or the third TC HDMI port;
-that historical run retained the old boot-argument aliases. The subsequent `wex` name migration is not yet live-qualified.
+that historical run retained the old boot-argument aliases.
+
+The current WEX 0.2.1/provider 0.5.0 pair subsequently passed device-ID automatic
+selection and the new boot arguments on both T8 (46D2/rev0) and MI646
+(9A49/rev1), with no device-id override or wiring properties. Dual FHD60/30-bit
+output, Metal/OpenGL, hardware HEVC and display sleep/wake passed on both;
+MI646 also passed hardware H.264 encode/decode. The operator subsequently
+confirmed individual connector unplug/replug on both machines; those later
+checks did not capture internal hotplug transitions. See
+[device selection](docs/device-selection.md) for the scope and override tests.
 
 ## Firmware connector defaults
 
