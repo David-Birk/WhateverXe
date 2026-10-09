@@ -6,7 +6,6 @@
 #include <IOKit/pci/IOPCIDevice.h>
 #include <kern/clock.h>
 #include <mach/kmod.h>
-#include <pexpert/pexpert.h>
 #include "AppleIntelTGLCompatPortProbe.hpp"
 
 extern "C" const char version[];
@@ -18,16 +17,14 @@ template <typename F> static F method(void *object, size_t offset) {
     return reinterpret_cast<F>((*static_cast<uintptr_t **>(object))[offset / 8]);
 }
 static void *manager(void *controller) { return field<void *>(controller, 0xc40); }
-static bool hardwareEnabled;
 static void *hardwareAccess;
-static bool adlnRequested;
 static XELP::ProbeBinding probeBinding;
 static uint32_t probeBindingState; // 0 unbound, 1 publishing, 2 immutable/pinned.
 
 // Generic register/DSB operations still belong only to the qualified TGL
 // backend. The separately bound Display13 port probe never opens this gate.
 static bool hardwareAllowed(void *controller) {
-    if (!hardwareEnabled || !controller) return false;
+    if (!controller) return false;
     auto service = static_cast<IOService *>(controller);
     auto pci = OSDynamicCast(IOPCIDevice, service->getProvider());
     const uint32_t identity = pci ? pci->configRead32(0) : 0;
@@ -47,8 +44,9 @@ static uint32_t read32(void *access, unsigned long offset) {
     return *reinterpret_cast<volatile uint32_t *>(base + offset);
 }
 
-// WEG registers the exact native manager/platform after its donor ABI and
-// board-policy checks. No reverse dependency on WEG or framebuffer globals.
+// WhateverXe registers the exact native manager/platform after its donor ABI
+// and board-policy checks. The provider independently verifies physical identity;
+// it does not read plugin boot arguments or depend on framebuffer globals.
 // The provider pins the immutable binding until reboot, like the donor owner.
 extern "C" bool xelpConfigureDisplay(void *controller,const XELP::ProbeConfig *config) {
     if(!controller || !config || !config->valid())return false;
@@ -74,7 +72,7 @@ extern "C" bool xelpConfigureDisplay(void *controller,const XELP::ProbeConfig *c
 // Retain the ABI1 export for preceding WEG builds. New callers use the shared
 // typed contract; both entries publish the same owner and implementation.
 extern "C" bool xelpConfigurePortProbe(void *controller,uint32_t abi,uint32_t selected,uint32_t backend) {
-    if(!adlnRequested || abi!=1 || !controller)return false;
+    if(abi!=1 || !controller)return false;
     auto service=static_cast<IOService *>(controller);
     if(service->getMetaClass()->getClassSize()<0x1C20)return false;
     auto pci=OSDynamicCast(IOPCIDevice,service->getProvider());
@@ -212,9 +210,9 @@ extern "C" uint32_t tglProbePort(void *port) {
         ProbeIO io {access};
         return XELP::probeMode(io,probeBinding,reinterpret_cast<uintptr_t>(access),pointer,config);
     }
-    if(adlnRequested)return 0;
-    // ABI0 TGL callers have no binding entry; preserve their previous policy.
-    if(!hardwareEnabled)return 0;
+    // ABI0 TGL callers have no binding entry. Only a manager established by
+    // hardwareAllowed on a physical TGL controller may use the legacy path.
+    // Unbound Alder-N/unknown owners never establish hardwareAccess.
     auto access = field<void *>(port, 0x578);
     if (!access || access != __atomic_load_n(&hardwareAccess, __ATOMIC_ACQUIRE)) return 0;
     auto config = field<void *>(port, 0x548);
@@ -227,12 +225,9 @@ extern "C" kern_return_t tglStart(kmod_info_t *, void *) {
     if (strcmp(version, "Darwin Kernel Version 20.0.0: Sat Jun 13 17:58:16 PDT 2020; root:xnu-7090.0.0.111.5~1/RELEASE_X86_64") &&
         strcmp(version, "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64"))
         return KERN_FAILURE;
-    // This dependency is loaded only with the qualified TGL donor. Keep the
-    // exact kernel and per-operation memory/ABI guards; no positive boot switch.
-    int adln = 0;
-    adlnRequested=PE_parse_boot_argn("-wex-adln", &adln, sizeof(adln));
-    hardwareEnabled=!adlnRequested;
-    IOLog("AppleIntelTGLCompat: revision 0.4.0 started, TGL hardware=%u Display13 probe=%u\n", hardwareEnabled,adlnRequested);
+    // Backend selection is per physical owner/validated binding, not a global
+    // boot policy. Register/DSB and port operations enforce their own guards.
+    IOLog("AppleIntelTGLCompat: revision 0.4.0 started, physical-owner/binding selection\n");
     return KERN_SUCCESS;
 }
 extern "C" kern_return_t tglStop(kmod_info_t *, void *) { return KERN_FAILURE; }

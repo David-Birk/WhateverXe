@@ -7,13 +7,13 @@ All WhateverXe-owned arguments use `wex`. The only accepted spelling is the new 
 - `-wexoff`, `-wexdbg`, `-wexbeta`: plugin disable, debug and unsupported-OS opt-in. Beta does not bypass exact kernel/donor checks. Disabling WEX while leaving its Apple donor active is not a safe recovery configuration.
 - `-wex-tgl`: explicit Tiger Lake selection (automatic on the already supported TGL CPU model). `-wex-tgl-off` disables that selection.
 - `-wex-nopanel`: omit the donor internal panel on the TGL path. The existing Display13 path has separate topology; this switch does not newly affect it.
-- `-wex-adln -wex-display13 -wex-adln-native -wex-adln-rcs-profile`: existing Alder-N native configuration under new names. The provider also consumes `-wex-adln`. These remain explicit admission/profile switches, not new hardware support.
+- `-wex-adln -wex-display13 -wex-adln-native -wex-adln-rcs-profile`: existing Alder-N native configuration under new names. AppleIntelTGLCompat consumes no boot arguments; WEX passes a validated profile and port policy through the existing binding API. These remain explicit admission/profile switches, not new hardware support.
 
 WEG-shared options remain `-igfxdvmt` and `gfxrst=`. Native Apple donor options `-allow3d` and `-disablegfxfirmware` also retain their names: renaming only our checks would not change what the donor reads. macOS/Lilu options are outside this namespace. DeviceProperties, IORegistry diagnostic names and the `adln-qtrace` executable name are unchanged.
 
 ## Migration
 
-Update WhateverXe, AppleIntelTGLCompat, the provider in the System KC, and EFI boot arguments together. Do not change only the arguments or only one kext. Retain a matching predecessor pair/config/KC for recovery. The name migration itself has not yet been live-qualified.
+When migrating from the old argument-dependent provider, update WhateverXe, AppleIntelTGLCompat, the provider in the System KC, and EFI boot arguments together. Do not change only the arguments or only one kext. Once the argument-independent provider is installed, a WEX-only spelling change does not itself require a provider/KC update. Retain a matching predecessor pair/config/KC for recovery. The name migration itself has not yet been live-qualified.
 
 T8 equivalent of the previously qualified arguments (the inherited no-panel flag is retained, although inactive on Display13):
 
@@ -69,3 +69,21 @@ Options beyond the normal configuration above are existing diagnostic/bring-up o
 | `-wexoff` | `-wxeoff` |
 | `-wexdbg` | `-wxedbg` |
 | `-wexbeta` | `-wxebeta` |
+
+## Provider selection
+
+AppleIntelTGLCompat has no user-facing options. Its exact-kernel gate remains at
+startup, and backend selection happens on the actual owner or registered binding:
+
+- Register and DSB methods retain the existing physical TGL PCI allowlist.
+- WEX chooses admission and wiring, then passes its profile and port policy to
+  `xelpConfigureDisplay`. The provider validates physical PCI/revision, ABI,
+  controller/manager/map and platform before pinning the association.
+- Without a binding, port probing retains the old TGL fallback only for the
+  manager previously established by a physical TGL controller operation.
+  Unbound Alder-N and unknown owners return mode0; no generation is guessed.
+- The legacy ABI1 entry validates the physical Alder-N profile and feeds the same
+  binding implementation, with no boot-argument prerequisite.
+
+This removes duplicated boot policy; it does not make the provider a standalone
+driver or automatically admit new hardware, ports or transports.

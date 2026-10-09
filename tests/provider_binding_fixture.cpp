@@ -23,26 +23,55 @@ struct IOMemoryMap:OSObject {uintptr_t address {};uint64_t bytes {};
 #define IOLog(...) ((void)0)
 // PROVIDER_SOURCE
 int main(int argc,char **argv) {
- assert(argc==2);const bool adln=!strcmp(argv[1],"adln");
+ assert(argc==2);const bool adln=!strncmp(argv[1],"adln",4);
+ const bool legacy=!strcmp(argv[1],"adln-abi1");
+ const bool rejected=!strcmp(argv[1],"unknown") || !strcmp(argv[1],"adln-revision");
  IOService controller;IOPCIDevice pci;OSObject access,port,foreign;IOMemoryMap map;
  std::vector<uint8_t> mmio(0x1000000);alignas(8) uint8_t platform[0x1C0] {};
- pci.identity=adln?0x46D18086:0x9A498086;controller.provider=&pci;platform[0x12]=9;
+ pci.identity=adln?0x46D18086:0x9A498086;
+ if(!strcmp(argv[1],"tgl-g4"))pci.identity=0x9A788086;
+ if(!strcmp(argv[1],"tgl-9a40"))pci.identity=0x9A408086;
+ if(!strcmp(argv[1],"adln-16eu"))pci.identity=0x46D28086;
+ if(!strcmp(argv[1],"unknown"))pci.identity=0x46A68086;
+ if(!strcmp(argv[1],"adln-revision"))pci.revision=1;
+ controller.provider=&pci;platform[0x12]=9;
  map.address=reinterpret_cast<uintptr_t>(mmio.data());map.bytes=mmio.size();
  field<void *>(&controller,0xC40)=&access;field<void *>(&controller,0xD40)=platform;
  field<OSObject *>(&controller,0xC70)=&map;field<uintptr_t>(&access,0x50)=map.address;
  field<uint32_t>(&access,0x60)=map.bytes;access.meta.size=0x68;
  port.meta.size=0x6B0;field<void *>(&port,0x578)=&access;
- adlnRequested=adln;hardwareEnabled=!adln;
- XELP::ProbeConfig config;config.profile=XELP::identify(pci.identity,0);
+ // Before registration, the port cannot read MMIO or infer its generation.
+ auto initial=reinterpret_cast<uint32_t *>(platform+0x20);
+ const uint32_t initialValues[]={0,1,2,0,0x800,0x202};memcpy(initial,initialValues,sizeof(initialValues));
+ field<void *>(&port,0x548)=initial;
+ assert(!tglProbePort(&port));
+ assert(!hardwareAllowed(nullptr));IOService orphan;assert(!hardwareAllowed(&orphan));
+ const bool physicalTGL=!adln && !rejected;
+ assert(hardwareAllowed(&controller)==physicalTGL);
+ assert(tglProbePort(&port)==(physicalTGL?1U:0U));
+ field<void *>(&port,0x578)=&foreign;assert(!tglProbePort(&port));field<void *>(&port,0x578)=&access;
+ XELP::ProbeConfig config;config.profile=XELP::identify(pci.identity,pci.revision);
  config.combo=3;config.comboBackend=adln?3:7;config.legacy=adln?0:0x1F8;config.legacyBackend=adln?0:0x1F8;
- // The new contract derives generation from physical identity, not boot args.
+ // The contract derives generation from physical identity, not boot args.
+ assert(!xelpConfigurePortProbe(&controller,2,3,3));
+ if(!adln)assert(!xelpConfigurePortProbe(&controller,1,3,3));
+ if(rejected) {
+  assert(!xelpConfigureDisplay(&controller,&config));
+  assert(!xelpConfigurePortProbe(&controller,1,3,3));
+  auto fake=config;fake.profile=XELP::identify(0x46D18086,0);fake.comboBackend=3;fake.legacy=fake.legacyBackend=0;
+  assert(!xelpConfigureDisplay(&controller,&fake));
+  assert(!probeBindingState && !controller.retains && !access.retains && !map.retains);
+  assert(!tglProbePort(&port));
+  printf("PASS rejected physical owner %s: no registration or legacy fallback.\n",argv[1]);return 0;
+ }
  auto malformed=config;malformed.abi=1;assert(!xelpConfigureDisplay(&controller,&malformed));
  malformed=config;malformed.bytes--;assert(!xelpConfigureDisplay(&controller,&malformed));
  malformed=config;malformed.profile.display=XELP::Display::Unknown;assert(!xelpConfigureDisplay(&controller,&malformed));
  pci.identity^=0x10000;assert(!xelpConfigureDisplay(&controller,&config));pci.identity^=0x10000;
  map.address++;assert(!xelpConfigureDisplay(&controller,&config));map.address--;
  assert(!controller.retains && !access.retains && !map.retains && !probeBindingState);
- assert(xelpConfigureDisplay(&controller,&config));
+ if(legacy)assert(xelpConfigurePortProbe(&controller,1,3,3));
+ else assert(xelpConfigureDisplay(&controller,&config));
  assert(controller.retains==1 && access.retains==1 && map.retains==1);
  assert(xelpConfigureDisplay(&controller,&config));assert(controller.retains==1);
  malformed=config;malformed.combo=1;assert(!xelpConfigureDisplay(&controller,&malformed));

@@ -4,7 +4,7 @@ Xe-LP compatibility plugin for Lilu, extracted from the Xe development fork of W
 Bundle: `WhateverXe.kext`, identifier: `org.b00t0x.WhateverXe`.
 Provider: `AppleIntelTGLCompat.kext`, identifier: `org.b00t0x.AppleIntelTGLCompat`.
 
-The provider supplies missing methods for the exact Apple TGL donor; it is not a GPU driver by itself. Existing Apple kernel/userland donors remain required. No new GPU or transport is admitted by this extraction.
+The provider supplies missing methods for the exact Apple TGL donor; it is not a GPU driver by itself. Existing Apple kernel/userland donors remain required. No new GPU or transport is admitted by this extraction. AppleIntelTGLCompat reads no boot arguments: TGL-specific operations check physical PCI identity, and shared port probing uses the profile and policy registered by WEX and independently validated by the provider.
 
 Upstream WhateverGreen copyright and BSD license are retained. See LICENSE.txt and docs/extraction-map.json. Lilu and MacKernelSDK are separate build dependencies, not vendored source.
 

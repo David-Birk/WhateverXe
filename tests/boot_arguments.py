@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise actual plugin/provider startup selection with new and obsolete args."""
+"""Exercise plugin selection and argument-independent provider startup."""
 from pathlib import Path
 import re
 import subprocess
@@ -9,6 +9,7 @@ root = Path(__file__).resolve().parents[1]
 xe = (root / 'WhateverXe/kern_xe.cpp').read_text()
 provider = (root / 'AppleIntelTGLCompat/AppleIntelTGLCompat.cpp').read_text()
 start = (root / 'WhateverXe/kern_start.cpp').read_text()
+assert 'PE_parse_boot_arg' not in provider and 'checkKernelArgument' not in provider
 # Guard the public namespace across every reader, including plugin arrays.
 external = {'-igfxdvmt', 'gfxrst', '-allow3d', '-disablegfxfirmware'}
 used = set()
@@ -39,7 +40,6 @@ static const char *qualified = "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:4
 static const char *version = qualified;
 static std::set<std::string> args;
 bool checkKernelArgument(const char *name) { return args.count(name); }
-bool PE_parse_boot_argn(const char *name, void *, unsigned) { return checkKernelArgument(name); }
 #define SYSLOG(...) ((void)0)
 #define IOLog(...) ((void)0)
 namespace CPUInfo { enum { CPU_MODEL_TIGERLAKE_U = 1 }; }
@@ -63,14 +63,11 @@ static XE *callbackXE;
 using kern_return_t = int;
 struct kmod_info_t {};
 static constexpr int KERN_FAILURE=5, KERN_SUCCESS=0;
-static bool adlnRequested, hardwareEnabled;
 // ACTUAL_SOURCE
 static XE boot(std::initializer_list<const char *> names, int model=0) {
  args.clear(); for (const auto name:names) args.insert(name);
  BaseDeviceInfo::get().cpuModel=model;
  XE xe; xe.init(); assert(tglStart(nullptr,nullptr)==KERN_SUCCESS);
- assert(xe.adlnRequested==adlnRequested);
- assert(hardwareEnabled==!adlnRequested);
  return xe;
 }
 int main() {
