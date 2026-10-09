@@ -211,8 +211,8 @@ extern "C" uint32_t tglProbePort(void *port) {
         return XELP::probeMode(io,probeBinding,reinterpret_cast<uintptr_t>(access),pointer,config);
     }
     // ABI0 TGL callers have no binding entry. Only a manager established by
-    // hardwareAllowed on a physical TGL controller may use the legacy path.
-    // Unbound Alder-N/unknown owners never establish hardwareAccess.
+    // hardwareAllowed with a validated TGL profile may use the legacy path.
+    // Other backend owners never establish hardwareAccess.
     auto access = field<void *>(port, 0x578);
     if (!access || access != __atomic_load_n(&hardwareAccess, __ATOMIC_ACQUIRE)) return 0;
     auto config = field<void *>(port, 0x548);

@@ -7827,8 +7827,8 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 					patcher.applyLookupPatch(&patch, site, sizeof(find) + 1);
 					skuReady = !memcmp(site, replace, sizeof(replace));
 				}
-				// 46D1 is positive in the donor's signed PCI-ID split. Admit it
-				// to the same real selector2 branch qualified by the probe trial.
+				// ADL-N and explicit overrides must reach the real selector2
+				// comparison regardless of the physical ID's signed ordering.
 				if (skuReady && (adlnDetected || xeProfile.overridden())) {
 					static const uint8_t findSplit[] {0x7F,0x15}, replaceSplit[] {0x90,0x90};
 					auto split=reinterpret_cast<uint8_t *>(address+0x23C25);
