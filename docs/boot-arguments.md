@@ -13,7 +13,7 @@ WEG-shared options remain `-igfxdvmt` and `gfxrst=`. Native Apple donor options 
 
 ## Migration
 
-When migrating from the old argument-dependent provider, update WhateverXe, AppleIntelTGLCompat, the provider in the System KC, and EFI boot arguments together. Do not change only the arguments or only one kext. Once the argument-independent provider is installed, a WEX-only spelling change does not itself require a provider/KC update. Retain a matching predecessor pair/config/KC for recovery. The 0.2.0/0.5.0 pair and renamed arguments have been live-tested on T8. The 0.2.1 automatic-default change requires only WEX and EFI argument updates; provider0.5.0 and its KC remain compatible.
+When migrating from the old argument-dependent provider, update WhateverXe, AppleIntelTGLCompat, the provider in the System KC, and EFI boot arguments together. Do not change only the arguments or only one kext. Once the argument-independent provider is installed, a WEX-only spelling change does not itself require a provider/KC update. Retain a matching predecessor pair/config/KC for recovery. The 0.2.0/0.5.0 pair and renamed arguments have been live-tested on T8. The 0.2.1 automatic-default change requires only WEX and EFI argument updates; provider0.5.0 and its KC remain compatible. T8 passed normal boot, dual FHD60/30-bit output, Metal/OpenGL/HEVC and display sleep/wake with all three feature arguments removed.
 
 T8 normal arguments for WEX 0.2.1 (the inherited no-panel flag is retained, although inactive on Display13):
 
