@@ -11411,7 +11411,7 @@ uint32_t XE::tglObserveHDCP1(void *hdcp, uint32_t stage, uint32_t event,
     r[7] = result; r[8] = 0xFFFFFFFFU;
     auto ctl = static_cast<uint8_t *>(callbackXE->tglObservationController);
     // A native callback may replace/release its HDCP object. Never dereference
-    // it on return; reuse the entry's pipe and the controller-owned MMIO map.
+    // it on return; reuse only the entry's pipe identity.
     if (!done) {
         auto b = static_cast<uint8_t *>(hdcp);
         auto path = *reinterpret_cast<uint8_t **>(b + 0x20);
@@ -11421,18 +11421,9 @@ uint32_t XE::tglObserveHDCP1(void *hdcp, uint32_t stage, uint32_t event,
         }
     }
     r[9] = pipe;
-    auto access = ctl ? *reinterpret_cast<uint8_t **>(ctl + 0xC40) : nullptr;
-    auto base = access ? *reinterpret_cast<volatile uint8_t **>(access + 0x50) : nullptr;
-    if (pipe < 4 && base && *reinterpret_cast<uint32_t *>(access + 0x60) >= 0x74000) {
-        r[10] = 1;
-        static const uint32_t hdcpRegs[] {0x66400,0x6641C,0x66498,0x664B0,0x664B4,0x664C0};
-        for (uint32_t i=0; i<arrsize(hdcpRegs); ++i)
-            r[12+i] = *reinterpret_cast<volatile uint32_t *>(base + hdcpRegs[i] + 0x100*pipe);
-        static const uint32_t streamRegs[] {0x70040,0x70000,0x70008,0x60400,0x60540,0x70058};
-        for (uint32_t i=0; i<arrsize(streamRegs); ++i)
-            r[18+i] = *reinterpret_cast<volatile uint32_t *>(base + streamRegs[i] + 0x1000*pipe);
-        r[24] = *reinterpret_cast<volatile uint32_t *>(base + 0x66C04);
-    }
+    // HDCP callbacks may run around stream teardown. No power reference is
+    // owned here; retain protocol/pipe memory only, not HDCP/pipe MMIO.
+    r[10]=0;r[11]=0x4D454D31; // unsampled; MEM1
     char key[48];
     snprintf(key, sizeof(key), "TGLHDCP1Last%u", static_cast<uint32_t>(r[2]) % 64);
     IORegistryEntry::getRegistryRoot()->setProperty(key, r, sizeof(r));
@@ -13454,12 +13445,14 @@ void XE::tglObservePath(void *port, void *path, uint32_t event, bool done, uint3
 }
 
 uint32_t XE::wrapTGLPortTraining(void *port, void *request) {
+ tglAUXRecord(port,10,false,0,0,0);
 	SYSLOG("igfx", "TGL330 port-training enter");
 	auto caller = __builtin_return_address(0);
 	tglObservePath(port, nullptr, 0, false, 0, request != nullptr, caller);
 	const auto token = tglTrainingScopes.enter(reinterpret_cast<uintptr_t>(current_thread()));
 	const auto r = FunctionCast(wrapTGLPortTraining, callbackXE->orgTGLPortTraining)(port, request);
 	tglTrainingScopes.leave(token);
+ tglAUXRecord(port,10,true,r,0,0);
 	SYSLOG("igfx", "TGL330 port-training return result=%x", r);
 	static uint32_t count {};
 	IORegistryEntry::getRegistryRoot()->setProperty("TGLQuietTrainingCalls",
@@ -13487,9 +13480,12 @@ void XE::wrapTGLFreePath(void *path) {
 }
 
 uint32_t XE::wrapTGLLightUpDP(void *controller, void *fb, void *path, const void *timing) {
+ auto port=path?*reinterpret_cast<void **>(static_cast<uint8_t *>(path)+0x3648):nullptr;
+ tglAUXRecord(port,11,false,0,0,0);
 	auto caller = __builtin_return_address(0);
 	tglObservePath(nullptr, path, 3, false, 0, 0, caller);
 	const auto r = FunctionCast(wrapTGLLightUpDP, callbackXE->orgTGLLightUpDP)(controller, fb, path, timing);
+ tglAUXRecord(port,11,true,r,0,0);
 	tglObservePath(nullptr, path, 3, true, r, 0, caller);
 	tglDPCDPublish();
 	return r;
@@ -13806,80 +13802,13 @@ void XE::tglObserveScanout(void *fb, void *plane, uint32_t event, bool done, uin
 		memcpy(r + 29, p + 0x68, 0xC0); // FB/path/pipe/scaler/access/registers/cache
 	}
 	if (pipe >= 4) return;
-	auto access = *reinterpret_cast<uint8_t **>(ctl + 0xC40);
-	auto base = access ? *reinterpret_cast<volatile uint8_t **>(access + 0x50) : nullptr;
-	const uint32_t size = access ? *reinterpret_cast<uint32_t *>(access + 0x60) : 0;
-	// Each entry contains address in the high word and the observed low word.
-	static const uint32_t regs[] {0x60000,0x60004,0x60008,0x6000C,0x60010,0x60014,
-		0x6001C,0x60030,0x60034,0x60040,0x60044,0x60400,0x60410,0x60540,
-		0x70008,0x7001C,0x70024,0x70180,0x70184,0x70188,0x7018C,0x70190,
-		0x7019C,0x701A4,0x701AC,0x701B4,0x70280,0x7029C,0x70380,0x7039C,
-		0x68180,0x68190,0x68194,0x68280,0x68290,0x68294};
-	if (base && size >= 0x74000) {
-		for (uint32_t i=0; i<arrsize(regs); ++i) {
-			const auto reg = regs[i] + 0x1000*pipe;
-			r[53+i] = (uint64_t(reg) << 32) | *reinterpret_cast<volatile uint32_t *>(base + reg);
-		}
-		r[89] = *reinterpret_cast<volatile uint32_t *>(base + 0x46140 + 4*pipe);
-		r[90] = 0; // retired fixed-TC2 diagnostic slot
-	}
-	// Sample first/second/final pages of both FB's GTT offset and plane1 surface.
-	// The donor maps GGTT at BAR0+8MiB; validate both its pointer and span.
-	auto ptes = *reinterpret_cast<volatile uint8_t **>(ctl + 0xCA0);
-	const uint32_t gttSize = *reinterpret_cast<uint32_t *>(ctl + 0xCEC);
-	r[91] = reinterpret_cast<uintptr_t>(ptes); r[92] = gttSize;
-	const uint32_t bytes = *reinterpret_cast<uint32_t *>(b + 0x4314);
-	const uint32_t offsets[] {*reinterpret_cast<uint32_t *>(b + 0x4330), static_cast<uint32_t>(r[75]) & 0xFFFFF000U};
-	if (base && size >= 0x800008 && ptes == base + 0x800000 && gttSize <= size - 0x800000) {
-		for (uint32_t j=0; j<2; ++j) for (uint32_t i=0; i<3; ++i) {
-			const uint64_t offset = uint64_t(offsets[j]) + (i==2 ? (bytes ? (bytes-1)&~4095U : 0) : 4096*i);
-			const uint64_t index = (offset >> 12) * 8;
-			r[93 + j*6 + i*2] = offset;
-			if (gttSize >= 8 && index <= gttSize - 8)
-				r[94 + j*6 + i*2] = *reinterpret_cast<volatile uint64_t *>(ptes + index);
-		}
-	}
-	// Native mode/depth and color state, followed by address/value entries.
-	memcpy(r + 105, b + 0x4230, 0x30);
-	r[111] = b[0x4A18];
-	uint32_t next = 113;
-	auto sample = [&](uint32_t reg) {
-		if (next < arrsize(r) && base && size >= 4 && reg <= size - 4)
-			r[next++] = (uint64_t(reg) << 32) | *reinterpret_cast<volatile uint32_t *>(base + reg);
-	};
-	// No interrupt acknowledgements, LUT-index/data reads, or diagnostic writes.
-	static const uint32_t pipeRegs[] {0x70000,0x70030,0x70040,0x70044,0x70080,0x70084,
-		0x701CC,0x7027C,0x70240,0x70244,0x70248,0x7024C,0x70250,0x70254,0x70258,0x7025C,0x70268};
-	for (auto reg : pipeRegs) sample(reg + 0x1000*pipe);
-	static const uint32_t globalRegs[] {0x45008,0x44FE8,0x44300,0x44304,0x45404,0x45454,0x46000,0x46070};
-	for (auto reg : globalRegs) sample(reg);
-	static const uint32_t colorRegs[] {0x49010,0x49014,0x49018,0x4901C,0x49020,0x49024,0x49028,
-		0x49030,0x49034,0x49038,0x49040,0x49044,0x49048,0x49050,0x49054,0x49058,
-		0x4905C,0x49060,0x49064,0x49068,0x4906C,0x49070,0x49074,0x49078,0x4907C};
-	for (auto reg : colorRegs) sample(reg + 0x100*pipe);
-	sample(0x4A480 + 0x800*pipe); // gamma mode; do not disturb indexed LUT access
-	for (uint32_t i=0; i<32; ++i) sample(0x100000 + 4*i); // first16 fences
-	// r57: distinguish a running timing generator from a valid output stream.
-	// Status reads do not acknowledge W1C causes or enable an interrupt. Keep
-	// these on the selected pipe/transcoder; do not power up unrelated blocks.
-	static const uint32_t streamRegs[] {
-		0x60028,0x6002C,0x60404,0x60544,0x60200, // shift/mult/sync/TP/DIP
-		0x60420,0x60424,0x60428,0x6042C,0x60434,0x60438,0x6043C,0x60480,0x60A70,
-		0x60800,0x60840, // PSR control/status
-		0x70028,0x7002C,0x70048,0x70058 // arbitration/misc2/frame timestamp/underrun
-	};
-	for (auto reg : streamRegs) sample(reg + 0x1000*pipe);
-	for (uint32_t i=0; i<4; ++i) sample(0x44400 + 0x10*pipe + 4*i);
-	static const uint32_t chicken[] {0x420C0,0x420C4,0x420C8,0x420D8};
-	sample(chicken[pipe]);
-	// TGL display version 12 uses transcoder-indexed HDCP registers (0x664xx),
-	// not the older port-indexed map. Observe request, authentication and actual
-	// link/stream encryption separately; no keys, authentication or bypass writes.
-	static const uint32_t hdcpRegs[] {0x66400,0x6641C,0x66498,0x664B0,0x664B4,0x664C0};
-	for (auto reg : hdcpRegs) sample(reg + 0x100*pipe);
-	sample(0x66C04); // key-load status only; never read key material
-
-	r[112] = next;
+ // These boundaries include pre-allocation and post-disable calls. Neither
+ // plane identity nor a mapped BAR proves pipe/GT power ownership. Preserve
+ // software fields and layout, leaving former MMIO/GGTT slots unsampled.
+ r[91]=reinterpret_cast<uintptr_t>(*reinterpret_cast<void **>(ctl+0xCA0));
+ r[92]=*reinterpret_cast<uint32_t *>(ctl+0xCEC);
+ memcpy(r+105,b+0x4230,0x30);r[111]=b[0x4A18];
+ r[112]=113;r[255]=0x4D454D31; // MEM1; no address/value register entries
 	char key[48]; snprintf(key, sizeof(key), "TGLScan%uLast%u", event, static_cast<uint32_t>(r[2]) % 64);
 	IORegistryEntry::getRegistryRoot()->setProperty(key, r, sizeof(r));
 	if (r[2] <= 32) {

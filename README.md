@@ -107,3 +107,11 @@ prove TC-cold protection. The optional whole-boot `-tgltc-bootstrap` experiment
 is not a production lifetime fix. It did not prevent the observed MI646 reconnect
 hang after successful mode0-to-4 and subsequent AUX calls. Runtime hotplug is
 not yet qualified; do not infer it from normal startup or display sleep/wake.
+
+
+Scanout and HDCP protocol observers are now memory-only as well. Their callbacks
+include pre-allocation/post-disable boundaries with no display/GT power lease.
+`TGLScan*` retains its 256-qword layout with MEM1 at qword255; old MMIO/GGTT value
+slots are unsampled. `TGLHDCP1*` uses qword11=MEM1 and qword10=0 (unsampled).
+TC control event10 brackets port training, event11 brackets LightUpDP. Native
+training, mode, power, scanout and HDCP operations remain unchanged.
