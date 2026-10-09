@@ -16,7 +16,7 @@ Provide `MacKernelSDK/` and `Lilu.kext/Contents/Resources/{Headers,Library}` loc
 
 ```sh
 python3 tools/build.py
-python3 tools/test.py --donor /path/to/AppleIntelTGLGraphicsFramebuffer
+python3 tools/test.py --donor /path/to/AppleIntelTGLGraphicsFramebuffer --accelerator /path/to/AppleIntelTGLGraphics
 python3 tools/stage_root.py --baseline /path/to/qualified-root --build build --output /path/to/new-root
 ```
 
@@ -146,3 +146,25 @@ endpoint balance, not a complete per-call lifetime proof. The removed unowned
 observer reads were independently reproduced with a PROT_NONE CPU test, but the
 specific register responsible for the earlier hardware hang is not established.
 USB-C, other routes, repeated hotplug and long-term stability remain unqualified.
+
+## Counted forcewake and interrupt reentry
+
+WEX 0.2.2 protects the exact donor's regular `SafeForceWake` entry for both
+qualified TGL and Alder-N paths. The native multithreaded, non-skip, nonzero-domain
+operation runs with local interrupts masked, restoring the caller's prior state.
+All regular callers, including telemetry interrupted by GPU submission, share
+this protection. Native locks, refcounts, client1 and ACK transactions remain;
+the uncounted interrupt client is not a replacement. Provider/ABI and boot options
+are unchanged. This restores protection missing on TGL since the historical r386
+withdrawal; it does not claim to resolve the separate intermittent boot issue.
+
+`WhateverXeForceWakeIRQProtected` reports route qualification.
+`WhateverXeForceWakeIRQ` is ten u64 words: schema1, protected calls, already-masked
+entries, returns, maximum native interval in ns, intervals >=100us, >=1ms,
+bypasses, total native ns, and intervals >=10ms. Reads are memory-only. The time
+excludes some wrapper overhead and is not an exact total interrupt-off duration;
+concurrent sampling can temporarily observe different call/return counts.
+`N97ForceWakeIRQProtected` remains available on Alder-N for existing collectors.
+The CPU replay executes the real wrapper and exact donor with injected IRQ,
+including a failing unprotected control, reference nesting and prior-state cases.
+Live qualification of this revision is recorded separately from those CPU tests.

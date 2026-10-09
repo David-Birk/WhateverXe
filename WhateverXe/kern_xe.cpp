@@ -11,7 +11,7 @@
 #include "kern_alderlake_n.hpp"
 #include "kern_xelp_device.hpp"
 #include "kern_xelp_memory_layout.hpp"
-#include "kern_alderlake_n_forcewake_irq.hpp"
+#include "kern_xelp_forcewake_irq.hpp"
 #include "kern_display13_boot.hpp"
 #include "kern_tgl_gmbus.hpp"
 #include "kern_alderlake_n_gpu.hpp"
@@ -10197,11 +10197,40 @@ using TGLCSBMethod = void (*)(void *,const TGLCSB::LegacyEntry *);
 using TGLCSBForceWake = void (*)(void *,bool,unsigned);
 TGLCSBMethod tglCSBMethods[4] {};
 TGLCSBForceWake tglCSBForceWake[2] {};
-mach_vm_address_t adlnRegularForceWakeOriginal {};
-void adlnRegularForceWakeProtected(void *owner,bool enable,unsigned domains) {
- AlderLakeNForceWakeIRQ::protect([](boolean_t enabled) {return ml_set_interrupts_enabled(enabled);},[&] {
-  reinterpret_cast<TGLCSBForceWake>(adlnRegularForceWakeOriginal)(owner,enable,domains);
+mach_vm_address_t xelpRegularForceWakeOriginal {};
+// Memory-only receipts: calls, masked entry, returns, max native ns,
+// >=100us, >=1ms, bypass, total native ns, >=10ms. No MMIO from readers.
+static uint64_t xelpForceWakeIRQ[9] {};
+void xelpRegularForceWakeProtected(void *owner,bool enable,unsigned domains) {
+ uint64_t flags=0;
+ if(owner)memcpy(&flags,static_cast<uint8_t *>(owner)+0x1190,sizeof(flags));
+ if(!owner || !XELPForceWakeIRQ::required(flags,domains)) {
+  __atomic_fetch_add(&xelpForceWakeIRQ[6],1ULL,__ATOMIC_RELAXED);
+  reinterpret_cast<TGLCSBForceWake>(xelpRegularForceWakeOriginal)(owner,enable,domains);
+  return;
+ }
+ // Protect every regular caller, including telemetry interrupted by IRQ submit.
+ // Preserve native counted client1 and restore the caller's prior interrupt state.
+ const auto prior=XELPForceWakeIRQ::protect([](boolean_t enabled) {return ml_set_interrupts_enabled(enabled);},[&] {
+  uint64_t start,end,ns;clock_get_uptime(&start);
+  __atomic_fetch_add(&xelpForceWakeIRQ[0],1ULL,__ATOMIC_RELAXED);
+  reinterpret_cast<TGLCSBForceWake>(xelpRegularForceWakeOriginal)(owner,enable,domains);
+  clock_get_uptime(&end);absolutetime_to_nanoseconds(end-start,&ns);
+  __atomic_fetch_add(&xelpForceWakeIRQ[2],1ULL,__ATOMIC_RELAXED);
+  auto maximum=__atomic_load_n(&xelpForceWakeIRQ[3],__ATOMIC_RELAXED);
+  while(ns>maximum && !__atomic_compare_exchange_n(&xelpForceWakeIRQ[3],&maximum,ns,false,__ATOMIC_RELAXED,__ATOMIC_RELAXED)) {}
+  __atomic_fetch_add(&xelpForceWakeIRQ[4],ns>=100000,__ATOMIC_RELAXED);
+  __atomic_fetch_add(&xelpForceWakeIRQ[5],ns>=1000000,__ATOMIC_RELAXED);
+  __atomic_fetch_add(&xelpForceWakeIRQ[7],ns,__ATOMIC_RELAXED);
+  __atomic_fetch_add(&xelpForceWakeIRQ[8],ns>=10000000,__ATOMIC_RELAXED);
  });
+ if(!prior)__atomic_fetch_add(&xelpForceWakeIRQ[1],1ULL,__ATOMIC_RELAXED);
+}
+bool xelpForceWakeIRQSerialize(void *,void *,OSSerialize *serializer) {
+ uint64_t q[10] {1};
+ for(unsigned i=0;i<9;++i)q[i+1]=__atomic_load_n(xelpForceWakeIRQ+i,__ATOMIC_RELAXED);
+ auto data=OSData::withBytes(q,sizeof(q));if(!data)return false;
+ const bool ok=data->serialize(serializer);data->release();return ok;
 }
 bool tglCSB12Enabled {false};
 struct TGLCSBEngine {
@@ -10321,18 +10350,23 @@ bool XE::installTGLCSB12(KernelPatcher &patcher,size_t index,mach_vm_address_t a
   auto p=patcher.solveSymbol<mach_vm_address_t>(index,wake[i],address,size);
   ok=ok && p==address+wakeOffsets[i];tglCSBForceWake[i]=reinterpret_cast<TGLCSBForceWake>(p);
  }
- // Only ADL-N forwards GT IRQ from the Display13 hardware filter here.
- // Keep the original refcounted native API, rather than replacing it with
- // the uncounted interrupt client. No long-lived wake or fabricated ACK.
- if(ok && adlnDetected) {
+ // Both native TGL and Display13 filters can dispatch GT submission in IRQ.
+ // Qualify the common counted entry before installing any CSB submission hooks.
+ // Keep its native refcounts/client/ACK; do not substitute the uncounted client.
+ if(ok) {
   const uint8_t entry[] {0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x50};
   ok=size>0x28E19 && !memcmp(reinterpret_cast<void *>(address+0x28C2A),entry,sizeof(entry)) &&
    *reinterpret_cast<uint8_t *>(address+0x28C9A)==0xE8 && *reinterpret_cast<uint8_t *>(address+0x28E14)==0xE9;
   if(ok) {
-   KernelPatcher::RouteRequest protect {wake[0],adlnRegularForceWakeProtected,adlnRegularForceWakeOriginal};
+   KernelPatcher::RouteRequest protect {wake[0],xelpRegularForceWakeProtected,xelpRegularForceWakeOriginal};
    ok=patcher.routeMultipleShort(index,&protect,1,address,size);patcher.clearError();
   }
-  IORegistryEntry::getRegistryRoot()->setProperty("N97ForceWakeIRQProtected",ok);
+  auto root=IORegistryEntry::getRegistryRoot();
+  root->setProperty("WhateverXeForceWakeIRQProtected",ok);
+  if(adlnDetected)root->setProperty("N97ForceWakeIRQProtected",ok);
+  if(ok)if(auto data=OSSerializer::forTarget(nullptr,xelpForceWakeIRQSerialize)) {
+   root->setProperty("WhateverXeForceWakeIRQ",data);data->release();
+  }
  }
  // r107: the 12-entry consumer requires the matching hardware capacity.
  // PRM vol2c printed1037 / Linux enable_execlists: GFX_MODE bit3=1.
