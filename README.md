@@ -105,8 +105,9 @@ contain no register reads. Reading them does not establish hardware liveness.
 The provider probe currently assumes powered FIA access; registration does not
 prove TC-cold protection. The optional whole-boot `-tgltc-bootstrap` experiment
 is not a production lifetime fix. It did not prevent the observed MI646 reconnect
-hang after successful mode0-to-4 and subsequent AUX calls. Runtime hotplug is
-not yet qualified; do not infer it from normal startup or display sleep/wake.
+hang after successful mode0-to-4 and subsequent AUX calls in r7. The subsequent
+observer fix below passed one MI646 physical reconnect cycle with normal boot
+arguments; this does not qualify other ports, boards or full TC power lifetime.
 
 
 Scanout and HDCP protocol observers are now memory-only as well. Their callbacks
@@ -115,3 +116,14 @@ include pre-allocation/post-disable boundaries with no display/GT power lease.
 slots are unsampled. `TGLHDCP1*` uses qword11=MEM1 and qword10=0 (unsampled).
 TC control event10 brackets port training, event11 brackets LightUpDP. Native
 training, mode, power, scanout and HDCP operations remain unchanged.
+
+On 2026-10-09, r8 (`ab33128`) passed one MI646 fixed-DP unplug/replug cycle
+while HDMI remained connected: mode4 -> 0 -> 4, training and LightUpDP returned
+success, both FHD60/30-bit desktops returned, and post-reconnect Metal passed
+three rounds with no GPU reset/recovery. AUX and additional parent references
+returned from 1 to 0 to 1; native PG3 references returned to the baseline of 4.
+The bounded live ring missed some intermediate records, so this establishes
+endpoint balance, not a complete per-call lifetime proof. The removed unowned
+observer reads were independently reproduced with a PROT_NONE CPU test, but the
+specific register responsible for the earlier hardware hang is not established.
+USB-C, other routes, repeated hotplug and long-term stability remain unqualified.
