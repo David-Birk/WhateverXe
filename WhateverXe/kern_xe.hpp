@@ -13,6 +13,7 @@
 #include "kern_tgl_hdmi_wiring.hpp"
 #include "kern_display13_hdmi_wiring.hpp"
 #include "kern_xelp_platform.hpp"
+#include "kern_vbt.hpp"
 #include "kern_xelp_donor.hpp"
 
 #include "kern_dvmt.hpp"
@@ -73,6 +74,8 @@ private:
 	bool adlnRequested {false};
 	bool adlnDetected {false};
     XELP::Profile xeProfile;
+    XELP::VBT::Ports firmwarePorts;
+    void xelpReadFirmware(IOPCIDevice *pci);
     void xelpLoadDisplayPool(IOService *provider);
     bool xelpInstallHostRPS(KernelPatcher &,size_t,mach_vm_address_t,size_t);
     uint32_t adlnNativeSubslices {}, adlnL3Banks {}, adlnNativeEUs {};

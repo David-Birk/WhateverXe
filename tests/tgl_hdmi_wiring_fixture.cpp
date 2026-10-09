@@ -6,6 +6,7 @@
 #include <map>
 #include <string>
 #include "kern_tgl_hdmi_wiring.hpp"
+#include "kern_vbt.hpp"
 #include "kern_xelp_donor.hpp"
 struct OSObject {virtual ~OSObject()=default;};
 struct OSData:OSObject {std::vector<uint8_t> data;void *getBytesNoCopy(){return data.data();}uint32_t getLength(){return data.size();}};
@@ -24,6 +25,7 @@ void *current_thread(){return reinterpret_cast<void *>(1);}
 struct XE {
  bool tglHDMIB=true,tglNoPanel=true,tglStolenMemoryReady=false;
  struct {uint32_t fStolenMemorySize=0;} framebufferPatch;
+ XELP::VBT::Ports firmwarePorts;
  // FIELDS
  uintptr_t orgTGLGetOSInformation {},orgTGLGMBus {},orgTGLComputeLanes {},tglHDMILaneCaller=0x100;
  uint64_t tglNoPanelPlatform[0x1C0/8] {};
@@ -68,6 +70,16 @@ int main(){
  // No board inference without an explicit property, even with the feature flag.
  setup();IOService unknown;assert(XE::tglLoadHDMIWiring(&unknown));
  assert(!object.tglHDMIWiring.hdmi&&XE::wrapTGLGetOSInformation(controller));
+ // Firmware default reaches the actual loader and native topology unchanged.
+ setup();object.firmwarePorts.status=XELP::VBT::Status::Valid;
+ object.firmwarePorts.present=2;object.firmwarePorts.port[1]={0x60d2,1,2};IOService firmware;
+ assert(XE::tglLoadHDMIWiring(&firmware)&&!object.tglHDMIWiringExplicit&&object.tglHDMIWiring.hdmi==2);
+ assert(XE::wrapTGLGetOSInformation(controller));
+ assert(reinterpret_cast<uint32_t *>(platform()+0x38)[1]==2);
+ // An explicitly malformed override still rejects a usable firmware default.
+ setup();object.firmwarePorts.status=XELP::VBT::Status::Valid;
+ object.firmwarePorts.present=2;object.firmwarePorts.port[1]={0x60d2,1,2};
+ OSData malformed;IOService invalidOverride{&malformed};assert(!XE::tglLoadHDMIWiring(&invalidOverride));
  // Explicit combo A replaces the donor panel; A+B retains separate DDC pins.
  for(unsigned mask:{1u,3u}){setup();auto a=property(mask,1,mask&2?2:0,0);IOService ap{&a};
   assert(XE::tglLoadHDMIWiring(&ap)&&XE::wrapTGLGetOSInformation(controller));

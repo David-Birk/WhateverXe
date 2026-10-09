@@ -33,3 +33,28 @@ Disable the Xe development WEG when enabling WhateverXe. This revision has no qu
 Initial CPU qualification: 50 suites passed, including Display13 resource/power/IRQ/WM/cursor, Alder-N GT, shared profile/provider binding, DVMT calculations, TGL wiring/training leases and exact donor TC replay. This does not qualify new hardware or a physical third output. Machine-specific runtime results are maintained in the enclosing project's Xe records.
 
 Historical scripts requiring private evidence or old WEG git revisions remain in the predecessor repository. The DKL regression counterexample is retained as a small licensed fixture. This repository does not require access to that old git history for its normal test command.
+
+## Firmware connector defaults
+
+On admitted Tiger Lake and Alder Lake-N hardware, WhateverXe reads the ACPI
+OpRegion VBT before selecting framebuffer hooks. OpRegion 2.0 absolute and 2.x
+relative external VBT addresses, plus the embedded VBT, are supported. The bounded
+parser currently accepts BDB versions 216–256. Missing, malformed or unsupported
+firmware never supplies guessed wiring; existing explicit properties remain usable.
+
+An unambiguous fixed TMDS entry for physical Combo A/B can supply the HDMI DDI
+and DDC pin without a wiring property. TGL uses `tgl-hdmi-wiring`; Alder-N uses
+`xelp-hdmi-wiring` with the existing TGL alias. Present properties override firmware,
+and malformed overrides are rejected. Firmware facts do not expand the qualified
+transport mask. DP++, LSPCON, USB-C/TBT, lane reversal, dock routing and inverted
+HPD entries do not become automatic fixed HDMI. The VBT DVO label alone does not
+select DP versus HDMI: some firmware names HDMI ports DP-A/DP-B.
+
+`WhateverXeFirmwarePorts` on IGPU contains twelve little-endian words: schema(1),
+parser status (1=valid), source (1=embedded, 2=external), BDB version, physical DDI
+mask, unmapped-entry count, non-fixed-TMDS mask, automatic-HDMI validity, HDMI mask,
+and DDC pins A/B/C. `WhateverXeFirmwarePortRecords` retains nine records of six
+words: device type, original DVO, DDC, AUX, VBT byte23 flags, and byte33 capabilities.
+USB-C/TBT capability is not the current link mode. `tgl-tc-wiring` remains explicit;
+`-tglnopanel` remains available. ROM scanning, automatic panel setup and new Type-C
+transports are not implemented by this change.

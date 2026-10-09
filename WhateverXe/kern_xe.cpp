@@ -2618,7 +2618,8 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	auto property=pci->getProperty("xelp-hdmi-wiring");
     if(!property)property=pci->getProperty("tgl-hdmi-wiring");
     auto wiring=OSDynamicCast(OSData,property);
-    const auto board=wiring ? Display13HDMIWiring::fromProperty(wiring->getBytesNoCopy(),wiring->getLength()) : Display13HDMIWiring {};
+    const auto board=XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,
+        wiring?wiring->getLength():0,firmwarePorts,3);
     if(adlnNativeRequested && !Display13FBTopology::supportedWiring(board)) {
         pci->setProperty("N97NativeRoutingUnavailable",true);return;
     }
@@ -2913,6 +2914,7 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 	xeProfile = physicalGPU ? XELP::identify(physicalGPU->configRead32(0),physicalGPU->configRead8(8)) : XELP::Profile {};
 	adlnDetected = xeProfile.family==XELP::Family::AlderLakeN;
 	if (adlnDetected) {
+        xelpReadFirmware(physicalGPU);
         tglDeviceId=physicalGPU->configRead16(2);
         modDVMTCalcFix.processKernel(patcher,info);
         xelpLoadDisplayPool(physicalGPU);
@@ -2937,7 +2939,8 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 		tglActive = currentFramebuffer == &kextIntelTGLFb && pci &&
 			xeProfile.admitted() && xeProfile.display==XELP::Display::XeD;
 		if (tglActive) {
-			// Read immutable board wiring before framebuffer hooks are selected.
+			// Read immutable firmware and board overrides before hook selection.
+            xelpReadFirmware(pci);
 			tglLoadHDMIWiring(pci);
 			tglCRCRequested = !tglHDMIB && checkKernelArgument("-tglcrc");
 			tglHoldFirstD3 = tglCRCRequested && checkKernelArgument("-tglholdfirstd3");
@@ -2969,51 +2972,6 @@ void XE::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 					}
 					mmio->release();
 				}
-			}
-			// Read-only firmware evidence for connector routing. ASLS and the
-			// fixed 8 KiB OpRegion layout follow Linux v6.12 intel_opregion.c.
-			const uint32_t asls = pci->configRead32(0xFC);
-			pci->setProperty("TGLASLS", asls, 32);
-			if (asls && asls <= 0xFFFFE000U) {
-				auto memory = IOMemoryDescriptor::withPhysicalAddress(asls, 8192, kIODirectionIn);
-				auto mapping = memory ? memory->map(kIOMapReadOnly) : nullptr;
-				if (mapping) {
-					auto bytes = reinterpret_cast<const uint8_t *>(mapping->getVirtualAddress());
-					if (!memcmp(bytes, "IntelGraphicsMem", 16)) {
-						auto data = OSData::withBytes(bytes, 8192);
-						if (data) {
-							pci->setProperty("TGLOpRegion", data);
-							data->release();
-						}
-						// MI646 uses OpRegion 2.1 with the VBT in an external
-						// relative region (ASLE mailbox RVDA/RVDS, packed).
-						uint64_t relative;
-						uint32_t length, mailboxes;
-						memcpy(&relative, bytes + 0x3BA, sizeof(relative));
-						memcpy(&length, bytes + 0x3C2, sizeof(length));
-						memcpy(&mailboxes, bytes + 0x58, sizeof(mailboxes));
-						if (bytes[23] == 2 && bytes[22] == 1 && (mailboxes & 4) &&
-							relative >= 8192 && relative <= 0x100000 && length >= 48 &&
-							length <= 65536 && uint64_t(asls) + relative + length <= 0x100000000ULL) {
-							auto vbtMemory = IOMemoryDescriptor::withPhysicalAddress(asls + relative, length, kIODirectionIn);
-							auto vbtMap = vbtMemory ? vbtMemory->map(kIOMapReadOnly) : nullptr;
-							if (vbtMap) {
-								auto vbt = reinterpret_cast<const uint8_t *>(vbtMap->getVirtualAddress());
-								if (!memcmp(vbt, "$VBT", 4)) {
-									auto vbtData = OSData::withBytes(vbt, length);
-									if (vbtData) {
-										pci->setProperty("TGLVBT", vbtData);
-										vbtData->release();
-									}
-								}
-								vbtMap->release();
-							}
-							if (vbtMemory) vbtMemory->release();
-						}
-					}
-					mapping->release();
-				}
-				if (memory) memory->release();
 			}
 			SYSLOG("igfx", "TGL donor path enabled for PCI 8086:%04x, platform 9A490000", pci->configRead16(2));
 		} else {
@@ -5423,7 +5381,8 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
 	auto property=provider->getProperty("xelp-hdmi-wiring");
     if(!property)property=provider->getProperty("tgl-hdmi-wiring");
     auto wiring=OSDynamicCast(OSData,property);
-    s->adlnHDMIWiring=wiring ? Display13HDMIWiring::fromProperty(wiring->getBytesNoCopy(),wiring->getLength()) : Display13HDMIWiring {};
+    s->adlnHDMIWiring=XELP::VBT::selectHDMI(property!=nullptr,wiring?wiring->getBytesNoCopy():nullptr,
+        wiring?wiring->getLength():0,s->firmwarePorts,3);
     if(!Display13FBTopology::supportedWiring(s->adlnHDMIWiring))return false;
 	const bool dualReady=s->adlnNativeReady && s->adlnScanoutDisableFB && s->orgAlderLakeNSysMemAllocate && s->orgAlderLakeNSysMemFree &&
 		(!adlnFixedSysMemEnabled || display13FBSysMem.lock) && display13FBSysMem.retireLock && s->adlnWorkLoopInGate && s->adlnWorkLoopTryClose && s->adlnWorkLoopOpen;
@@ -9408,14 +9367,15 @@ bool XE::tglLoadTCWiring(IOService *provider) {
 }
 
 // Loaded before hook selection, then reused at native start. Explicit wiring
-// enables the qualified HDMI backend; absent wiring never guesses a board port.
+// overrides firmware. Only unambiguous firmware TMDS uses an admitted backend.
 bool XE::tglLoadHDMIWiring(IOService *provider) {
  auto self=callbackXE;
  if(self->tglHDMIWiringLoaded)return self->tglHDMIWiring.supported(self->tglHDMIBackendMask,self->tglHDMIB);
  self->tglHDMIWiringLoaded=true;
  auto property=provider?provider->getProperty("tgl-hdmi-wiring"):nullptr;
  self->tglHDMIWiringExplicit=property!=nullptr;auto data=OSDynamicCast(OSData,property);
- self->tglHDMIWiring=property ? (data?TGLHDMIWiring::fromProperty(data->getBytesNoCopy(),data->getLength()):TGLHDMIWiring{}) : TGLHDMIWiring::empty();
+ self->tglHDMIWiring=XELP::VBT::selectHDMI(property!=nullptr,data?data->getBytesNoCopy():nullptr,
+  data?data->getLength():0,self->firmwarePorts,self->tglHDMIBackendMask);
  const auto &w=self->tglHDMIWiring;
  self->tglHDMIB=w.valid && w.hdmi && !(w.hdmi&~self->tglHDMIBackendMask);
  const bool admitted=w.supported(self->tglHDMIBackendMask,self->tglHDMIB);
