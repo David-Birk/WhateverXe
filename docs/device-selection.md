@@ -91,4 +91,11 @@ and the boot configuration as a matching set. WEX 0.1.x/provider0.4.x ABI2 must 
 be mixed with this pair. Old ABI2 registrations are rejected before reading their
 old profile layout. Apple executable files are unchanged; `stage_root.py` can
 update either the old TGLCompat or already renamed AppleIntelTGLCompat bundle and
-refresh its framebuffer dependency version. This is an offline candidate only.
+refresh its framebuffer dependency version.
+
+The 0.2.0/0.5.0 pair was live-tested on an Alder-N 46D2/rev0 system with
+physical-ID auto-selection, no selector argument or device-id override, dual
+FHD60/30-bit HDMI, Metal, OpenGL, hardware HEVC and display sleep/wake.
+The published `model` and System Profiler name were Intel UHD Graphics; Metal's
+internal device name still comes from the donor and reported TGL Unknown.
+This does not qualify unknown-device overrides, other IDs or system sleep.
