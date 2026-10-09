@@ -46,7 +46,9 @@ struct NativePorts {
             config==static_cast<const uint8_t *>(platform)+0x20+24*ddi;
     }
 };
-// ABI2 binds a profile and immutable board intent, not mutable connection state.
+// ABI2 binds a profile and immutable probe policy, not mutable connection state.
+// legacy permits probing for mode4; it does not force mode4 or classify a
+// USB-C-capable connector as physically fixed DP. The provider still checks FIA.
 // Type-C intent is represented but not admitted by either current backend.
 struct ProbeConfig {
     uint32_t abi {2},bytes {sizeof(ProbeConfig)};

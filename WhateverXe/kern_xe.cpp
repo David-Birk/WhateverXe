@@ -2874,7 +2874,7 @@ bool XE::xelpBindProbe(void *controller) {
     if(xeProfile.display==XELP::Display::XeD) {
         if(!tglHDMIWiringApplied || !tglTCWiringLoaded || !tglTCWiring.valid)return false;
         config.combo=tglHDMIWiring.hdmi;config.comboBackend=7;
-        config.legacy=tglTCWiring.legacy;config.typeC=tglTCWiring.typeC;config.excluded=tglTCWiring.excluded;
+        config.legacy=tglTCProbeMask();config.typeC=tglTCWiring.typeC;config.excluded=tglTCWiring.excluded;
         config.legacyBackend=tglAUXParentMask;
     } else {
         if(!display13FBTopologyHooksReady || controller!=adlnTopologyController ||
@@ -9357,6 +9357,9 @@ bool XE::tglLoadTCWiring(IOService *provider) {
  self->tglTCWiringExplicit=property!=nullptr;
  auto data=OSDynamicCast(OSData,property);
  self->tglTCWiring=property ? (data?TGLTCWiring::fromProperty(data->getBytesNoCopy(),data->getLength()):TGLTCWiring{}) : TGLTCWiring::fromMasks(0,0,0);
+ if(!property && self->xeProfile.family==XELP::Family::TigerLake)
+  self->tglTCAutoCandidates=self->firmwarePorts.tglDPCandidates(self->tglAUXParentMask&0x18);
+ IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeTCDPCandidates",self->tglTCAutoCandidates,32);
  const auto &w=self->tglTCWiring;
  uint32_t record[] {355,self->tglTCWiringExplicit,w.valid,w.legacy,w.typeC,w.excluded,
   self->tglAUXParentMask,w.valid?w.legacy&self->tglAUXParentMask:0,
@@ -11328,6 +11331,13 @@ uint32_t XE::wrapTGLProbePort(void *port) {
     uint32_t mode=0;
     if(callbackXE->xelpBindProbe(callbackXE->tglObservationController))
         mode=reinterpret_cast<XELP::ProbePort>(callbackXE->xelpProviderProbe)(port);
+    // Register a fixed-DP backend only after the provider's powered mode4
+    // probe. This is monotonic policy, NOT connection state or a power lease.
+    // Never clear it at HPD-low: outstanding AUX refs must keep their puts.
+    if(mode==4 && ddi<9 && (callbackXE->tglTCAutoCandidates&(1U<<ddi))) {
+        const auto selected=__atomic_or_fetch(&callbackXE->tglTCAutoRegistered,1U<<ddi,__ATOMIC_RELEASE);
+        IORegistryEntry::getRegistryRoot()->setProperty("WhateverXeTCDPRegistered",selected,32);
+    }
 	char modeKey[40];
 	snprintf(modeKey, sizeof(modeKey), "TGLWEGPort%uProbeMode", ddi);
 	IORegistryEntry::getRegistryRoot()->setProperty(modeKey, mode, 32);
@@ -11535,6 +11545,7 @@ uint32_t XE::wrapTGLSetPortMode(void *port, uint32_t mode) {
  // and software-result check; locking only our later readback loses updates.
  // This is not a port-use admission/drain gate or a hardware-idle proof.
  auto self=callbackXE;
+ if(!self->tglTCModeAllowed(traceDDI,mode))return kIOReturnNotReady;
  auto transitionLock=self->tglModeResultReady && traceDDI>=3 && traceDDI<=8 ? self->tglModeTransitionLock : nullptr;
  if(transitionLock) {
   IORecursiveLockLock(transitionLock);

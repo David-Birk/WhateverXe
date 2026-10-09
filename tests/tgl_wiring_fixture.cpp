@@ -4,6 +4,7 @@
 #include <cstring>
 #include <vector>
 #include "kern_tgl_tc_boot.hpp"
+#include "kern_vbt.hpp"
 struct OSObject {virtual ~OSObject()=default;};
 struct OSData:OSObject {
  std::vector<uint8_t> bytes;
@@ -11,7 +12,8 @@ struct OSData:OSObject {
 };
 struct IOService {OSObject *property {};unsigned reads {};OSObject *getProperty(const char *n){assert(!strcmp(n,"tgl-tc-wiring"));++reads;return property;}};
 struct IORegistryEntry {
- uint32_t record[10] {};unsigned writes {};
+ uint32_t record[10] {},candidates {};unsigned writes {};
+ void setProperty(const char *name,uint32_t value,unsigned bits){assert(!strcmp(name,"WhateverXeTCDPCandidates")&&bits==32);candidates=value;}
  static IORegistryEntry *getRegistryRoot(){static IORegistryEntry r;return &r;}
  void setProperty(const char *name,const void *data,unsigned length){assert(!strcmp(name,"TGLTCWiring")&&length==sizeof(record));memcpy(record,data,length);++writes;}
 };
@@ -19,6 +21,7 @@ struct IORegistryEntry {
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 struct XE {
  bool tglActive=true;
+ XELP::Profile xeProfile=XELP::identify(0x9a498086,1);XELP::VBT::Ports firmwarePorts;
  // FIELDS
  uintptr_t orgTGLLaneMask {};
  static uint32_t wrapTGLLaneMask(void *);
@@ -33,13 +36,26 @@ void reset(){object=XE{};object.orgTGLLaneMask=(uintptr_t)nativeLanes;object.tgl
 int main(){
  reset();IOService absent;
  assert(XE::tglLoadTCWiring(&absent)&&!object.tglTCWiringExplicit&&object.tglTCWiring.legacy==0);
+ // A firmware candidate is not a registered backend, even with USB-C/TBT
+ // capability. Only the actual powered provider probe can register it.
+ reset();object.firmwarePorts.status=XELP::VBT::Status::Valid;
+ object.firmwarePorts.present=0x18;object.firmwarePorts.port[3]={0x68c6,9,0,0x30,0xc0,3};
+ object.firmwarePorts.port[4]={0x60d6,11,5,0x50,0xc0,3};
+ assert(XE::tglLoadTCWiring(&absent)&&object.tglTCAutoCandidates==0x10);
+ assert(object.tglTCProbeMask()==0x10&&!object.tglLegacyTCEligible(4));
+ assert(object.tglTCModeAllowed(4,0)&&!object.tglTCModeAllowed(4,4));
+ object.tglTCAutoRegistered=0x10;
+ assert(object.tglLegacyTCEligible(4)&&object.tglTCModeAllowed(4,4));
+ assert(!object.tglTCModeAllowed(4,2)&&!object.tglTCModeAllowed(4,3));
  // Present-invalid must never fall back to the known machine's preset.
  OSObject wrongType;auto good=property(1u<<4,0,0);
  for(unsigned kind=0;kind<5;++kind){
   reset();auto d=good;IOService provider;
   if(kind==0)provider.property=&wrongType;
   else {provider.property=&d;if(kind==1)d.bytes.pop_back();if(kind==2)d.bytes.push_back(0);if(kind==3)d.bytes[0]=2;if(kind==4)d.bytes[4]=1;}
+  object.firmwarePorts.status=XELP::VBT::Status::Valid;object.firmwarePorts.present=0x10;object.firmwarePorts.port[4]={0x60d6,11,5,0x50};
   assert(!XE::tglLoadTCWiring(&provider)&&object.tglTCWiringExplicit&&!object.tglTCWiring.valid);
+  assert(!object.tglTCAutoCandidates);
   provider.property=&good;assert(!XE::tglLoadTCWiring(&provider)&&provider.reads==1);
  }
  unsigned cases=0;

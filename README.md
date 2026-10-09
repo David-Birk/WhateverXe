@@ -55,6 +55,20 @@ parser status (1=valid), source (1=embedded, 2=external), BDB version, physical 
 mask, unmapped-entry count, non-fixed-TMDS mask, automatic-HDMI validity, HDMI mask,
 and DDC pins A/B/C. `WhateverXeFirmwarePortRecords` retains nine records of six
 words: device type, original DVO, DDC, AUX, VBT byte23 flags, and byte33 capabilities.
-USB-C/TBT capability is not the current link mode. `tgl-tc-wiring` remains explicit;
-`-tglnopanel` remains available. ROM scanning, automatic panel setup and new Type-C
-transports are not implemented by this change.
+USB-C/TBT capability is not the current link mode.
+
+Without `tgl-tc-wiring`, TGL external DP entries with matching DDI/AUX routing
+can become probe candidates. The automatic backend currently admits TC1/TC2:
+the donor's native mode setter still uses FIA1, so later TC instances need a
+separate ownership implementation. Reversed lanes, inverted HPD, dock/LSPCON,
+shared or remapped AUX and internal panels are excluded. Explicit properties,
+including invalid ones, override automatic discovery.
+
+The provider still checks live HPD/FIA and only a successful mode4 probe registers
+the port for existing fixed-DP PHY/AUX fixes. Registration persists through
+disconnect to keep power gets/puts symmetric; it is neither connection state nor
+a power reference. Automatic ports reject mode2/3 (TBT/DP-alt). Diagnostics on
+the registry root are `WhateverXeTCDPCandidates` and `WhateverXeTCDPRegistered`
+(physical-DDI bitmasks). No CPU-to-board lookup is involved. `-tglnopanel` remains
+available. ROM scanning, automatic panel setup, DP++ protocol fallback and new
+Type-C transports are not implemented by this change.

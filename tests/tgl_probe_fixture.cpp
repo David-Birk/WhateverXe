@@ -39,14 +39,14 @@ uint32_t providerProbe(void *p) {
  // The production provider owns classification. Keep this fixture's original
  // hostile-MMIO setup to prove admission still precedes access dereferencing.
  if(c[0]<=2)return 1;
- if(!object.tglLegacyTCEligible(c[0]))return 0;
+ if(c[0]>=9 || !(object.tglTCProbeMask()&(1U<<c[0])))return 0;
  auto access=*reinterpret_cast<uint8_t **>(port+0x578);if(!access)return 0;
  struct IO {
   uint8_t *access;
   bool readable(uint32_t r){auto n=*reinterpret_cast<uint32_t *>(access+0x60);return *reinterpret_cast<uintptr_t *>(access+0x50) && n>=4 && r<=n-4;}
   uint32_t read(uint32_t r){return *reinterpret_cast<volatile uint32_t *>(*reinterpret_cast<uintptr_t *>(access+0x50)+r);}
  } io {access};
- return XELP::legacyTGLMode(io,c[0],object.tglTCWiring.legacy&object.tglAUXParentMask);
+ return XELP::legacyTGLMode(io,c[0],object.tglTCProbeMask());
 }
 
 // PRODUCTION_FUNCTIONS
@@ -123,6 +123,23 @@ int main(int argc,char **) {
   assert(!f.readyForLegacy(0x40u<<(8*idx),1u<<idx));
   assert(!f.readyForLegacy(~0u,1u<<idx));assert(!f.readyForLegacy(0,~0u));++geometries;
  }
+ // Automatic candidates pass the exact same provider probe; only a
+ // successful mode4 result registers backend hooks. Disconnect keeps the
+ // registration for AUX cleanup, but never forces the next probe's mode.
+ assert(mprotect(mmio,size,PROT_READ|PROT_WRITE)==0);
+ *reinterpret_cast<uint8_t **>(port+0x578)=access;
+ object.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);object.tglTCAutoCandidates=0x10;
+ object.tglTCAutoRegistered=0;object.tglAUXParentMask=0x10;config[0]=4;
+ length=size;hpd=0;live=0x10;ready=2;
+ assert(XE::wrapTGLProbePort(port)==0&&!object.tglLegacyTCEligible(4));
+ hpd=1u<<25;live=0x2010;
+ assert(XE::wrapTGLProbePort(port)==0&&!object.tglLegacyTCEligible(4));
+ live=0x10;assert(XE::wrapTGLProbePort(port)==4&&object.tglTCAutoRegistered==0x10);
+ assert(object.tglLegacyTCEligible(4)&&object.tglTCModeAllowed(4,4));
+ hpd=0;assert(XE::wrapTGLProbePort(port)==0&&object.tglLegacyTCEligible(4));
+ hpd=1u<<25;live=0x6010;
+ assert(XE::wrapTGLProbePort(port)==0&&!object.tglTCModeAllowed(4,3));
+ assert(object.tglTCModeAllowed(4,0));
  assert(XE::wrapTGLProbePort(nullptr)==0);
  object.tglActive=false;assert(XE::wrapTGLProbePort(mmio)==0);object.tglActive=true;
  *reinterpret_cast<uint32_t **>(port+0x548)=nullptr;assert(XE::wrapTGLProbePort(port)==0);

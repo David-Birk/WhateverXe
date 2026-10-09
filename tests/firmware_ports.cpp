@@ -36,6 +36,23 @@ int main(int argc,char **argv){
  auto r=parse(bytes.data(),bytes.size(),Family::TigerLake);assert(r.valid()&&r.present==0x12&&r.hdmi(3).hdmi==2&&r.ambiguous==0x10);
  // Type-C capability never becomes an automatic fixed-DP mode decision.
  assert(r.port[4].capabilities==3&&r.port[4].dp());
+ // All six port coordinates and capability combinations, independent of
+ // CPU model. Current runtime auto backend is TC1/2 only (native FIA1).
+ for(unsigned d=3;d<9;++d)for(unsigned caps=0;caps<4;++caps){
+  const unsigned dvo[]={9,11,13,15,17,19};
+  auto b=table({{0x60d6,dvo[d-3],d+1,(d+1)*0x10,0xc0,caps}});
+  auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.tglDPCandidates(0x1f8)==(1U<<d));
+  assert(q.tglDPCandidates(0x18)==(d<5?1U<<d:0));
+  for(unsigned aux:{0u,0x30u,0xa0u}){q.port[d].aux=aux;assert(!q.tglDPCandidates(0x1f8));}
+ }
+ for(auto p:{Port{0x60d2,11,5,0x50},Port{0x78c6,11,5,0x50},Port{0x60d6,11,5,0x50,2},
+              Port{0x60d6,11,5,0x50,4},Port{0x60d6,11,5,0x50,1},Port{0x60d6,11,5,0x50,0x10}}){
+  auto b=table({p});auto q=parse(b.data(),b.size(),Family::TigerLake);assert(!q.tglDPCandidates(0x18));
+ }
+ assert(r.tglDPCandidates(0x18)==0x10);
+ auto shared=r;shared.present|=8;shared.port[3]={0x68c6,9,0,0x50};
+ assert(!shared.tglDPCandidates(0x18));
  auto adl=table({{0x60d2,10,1},{0x60d2,7,2},{0x60d2,14,3}});
  auto a=parse(adl.data(),adl.size(),Family::AlderLakeN);assert(a.valid()&&a.present==0xB&&a.hdmi(3).hdmi==3);
  assert(ddi(Family::TigerLake,9)==3&&ddi(Family::AlderLakeN,13)==3&&ddi(Family::AlderLakeN,19)==6);

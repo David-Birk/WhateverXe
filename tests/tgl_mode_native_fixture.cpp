@@ -24,6 +24,8 @@ struct XE {
  static void tglRecordNativeModeBinding(void *,uint32_t,uint32_t) {}
  static uint32_t wrapTGLSetPortMode(void*,uint32_t);
  uintptr_t orgTGLSetPortMode {};
+ bool automatic=false,registered=false;
+ bool tglTCModeAllowed(uint32_t ddi,uint32_t mode)const{return !automatic || ddi!=4 || mode==0 || (mode==4&&registered);}
  IORecursiveLock *tglModeTransitionLock {};uint32_t tglModeSerializedCalls {};
  bool tglModeResultReady {true}; uint32_t tglModeResultCorrections {};
 };
@@ -87,6 +89,15 @@ int main(int argc,char **argv){
   ++cases;
  }
  controller[0xc58]=0;
+ // The automatic path must reject unsupported mode entry before the native
+ // writer acquires AUX or modifies ownership; cleanup mode0 is always allowed.
+ instance.automatic=true;reset(4,2);
+ for(unsigned m:{2u,3u,4u})assert(XE::wrapTGLSetPortMode(port,m)==kIOReturnNotReady);
+ assert(!powerGets&&!powerPuts&&!writes&&!reads);
+ instance.registered=true;assert(XE::wrapTGLSetPortMode(port,4)==0&&mode()==4);
+ assert(XE::wrapTGLSetPortMode(port,3)==kIOReturnNotReady&&mode()==4);
+ assert(XE::wrapTGLSetPortMode(port,0)==0&&powerGets==powerPuts);
+ instance.automatic=false;
  // Native HAL does not treat repeated mode4 as a no-op. This is why boot
  // handoff and subsequent setters must share the durable mode slot.
  reset(4,2);assert(native(port,4)==0 && native(port,4)==0 && mode()==4);

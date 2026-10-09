@@ -27,6 +27,22 @@ struct Ports {
     uint32_t version {},bytes {},present {},unmapped {},ambiguous {};
     Port port[PortCount];
     bool valid() const {return status==Status::Valid;}
+    // TGL external DP candidates, not a fixed/alt/TBT mode decision. Current
+    // native AUX routing follows DDI; different firmware AUX needs a backend.
+    uint32_t tglDPCandidates(uint32_t backend) const {
+        if(!valid())return 0;
+        uint32_t result=0;
+        for(unsigned d=3;d<PortCount;++d) {
+            const auto &p=port[d];
+            bool shared=false;
+            for(unsigned other=0;other<PortCount;++other)
+                if(other!=d && (present&(1U<<other)) && port[other].dp() && port[other].aux==p.aux)shared=true;
+            if((present&backend&(1U<<d)) && (p.type&0x14)==0x14 &&
+               !(p.type&(0x1000|0x400|0x20|1)) && !(p.flags&0x17) &&
+               !shared && p.aux==(d+1)*0x10)result|=1U<<d;
+        }
+        return result;
+    }
     TGLHDMIWiring hdmi(uint32_t backend) const {
         auto w=TGLHDMIWiring::empty();
         if(!valid())return w; // no guessed wiring; caller retains existing guards

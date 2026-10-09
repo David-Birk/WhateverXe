@@ -374,9 +374,19 @@ private:
 	uint32_t tglAUXParentMask {TGLTCWiring::Mask};
  TGLTCWiring tglTCWiring {TGLTCWiring::fromMasks(0,0,0)};
  bool tglTCWiringLoaded {}, tglTCWiringExplicit {};
+ // Native mode setter owns FIA1 bits 0/1 correctly on modular TGL. Later
+ // instances need the new mode backend, regardless of available PHY math.
+ uint32_t tglTCAutoCandidates {},tglTCAutoRegistered {};
+ uint32_t tglTCProbeMask() const {return tglTCWiring.valid ?
+  (tglTCWiring.legacy|tglTCAutoCandidates)&tglAUXParentMask : 0;}
+ bool tglTCModeAllowed(uint32_t ddi,uint32_t mode) const {
+  if(ddi>=9 || !(tglTCAutoCandidates&(1U<<ddi)))return true;
+  return mode==0 || (mode==4 && (__atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE)&(1U<<ddi)));
+ }
  static bool tglLoadTCWiring(IOService *provider);
  bool tglLegacyTCEligible(uint32_t ddi) const {
-  return tglTCWiring.legacyEligible(ddi,tglAUXParentMask);
+  return tglTCWiring.legacyEligible(ddi,tglAUXParentMask) || (ddi>=3 && ddi<9 &&
+   (tglTCAutoCandidates & tglAUXParentMask & __atomic_load_n(&tglTCAutoRegistered,__ATOMIC_ACQUIRE) & (1U<<ddi)));
  }
 	uint32_t tglAUXParentRefs[9] {};
 	bool tglAUXParentEligible(uint32_t ddi) const {

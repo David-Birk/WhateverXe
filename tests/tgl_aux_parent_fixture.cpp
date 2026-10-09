@@ -92,6 +92,12 @@ int main() {
  }
  assert(!object.tglAUXParentEligible(9) && !object.tglAUXParentEligible(~0u));
 #if WIRING
+ // Automatic registration starts after the first mode4 probe. A previously
+ // inherited AUX ref gets no retrospective PG token; preserve symmetry when
+ // it drains before our new reference, including a disconnected port.
+ reset();object.tglTCWiring=TGLTCWiring::fromMasks(0,0,0);object.tglTCAutoCandidates=0x10;
+ XE::wrapTGLEnableAUXPower(primary.data,4);assert(native(primary.data,4)==1&&!owned(4));
+ object.tglTCAutoRegistered=0x10;get(4);put(4,false);checkSum();put(4);checkSum();
  // Neither a backend bit alone nor a wiring bit alone widens admission.
  object.tglAUXParentMask|=1u<<5;assert(!object.tglAUXParentEligible(5));
  object.tglTCWiring=TGLTCWiring::fromMasks((1u<<4)|(1u<<6),0,0);
