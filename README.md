@@ -38,8 +38,11 @@ The same r8 binary (`ab33128`) and provider0.4.0 passed T8 Pro/N95 (16 EU)
 normal startup, dual FHD60/30-bit output, Metal, GL core/legacy, hardware HEVC,
 and one display sleep/wake on 2026-10-09. T8's Combo A/B and DDC1/2 were selected
 from VBT BDB249 with both HDMI wiring properties absent. No board-specific code
-was added. This does not qualify T8 hotplug, H.264, system sleep or its third
-TC HDMI port; existing boot-argument aliases were retained.
+was added. A subsequent physical unplug/replug of Combo B and then A, once each
+with the peer connected, preserved the peer display and restored both outputs
+and Metal without GPU/resource/power faults. This does not qualify all-output
+disconnect, repeated hotplug, H.264, system sleep or the third TC HDMI port;
+existing boot-argument aliases were retained.
 
 ## Firmware connector defaults
 
