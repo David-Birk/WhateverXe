@@ -98,4 +98,11 @@ physical-ID auto-selection, no selector argument or device-id override, dual
 FHD60/30-bit HDMI, Metal, OpenGL, hardware HEVC and display sleep/wake.
 The published `model` and System Profiler name were Intel UHD Graphics; Metal's
 internal device name still comes from the donor and reported TGL Unknown.
-This does not qualify unknown-device overrides, other IDs or system sleep.
+A second live test removed only the 46D2 entry from the shared table in both
+kexts and injected `device-id` 46D3. It selected physical46D2/effective46D3,
+bound the provider and rendered on both displays. The physical fuse values and
+16-EU resources stayed unchanged; Metal, OpenGL and hardware HEVC passed.
+The model fell back to the effective entry, Intel Graphics. CPU controls rejected
+the unlisted physical ID without the override. The normal pair and configuration
+were restored afterward. This validates the unknown-ID path on known hardware;
+it does not qualify previously untested hardware, other backends or system sleep.
