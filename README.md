@@ -34,6 +34,13 @@ Initial CPU qualification: 50 suites passed, including Display13 resource/power/
 
 Historical scripts requiring private evidence or old WEG git revisions remain in the predecessor repository. The DKL regression counterexample is retained as a small licensed fixture. This repository does not require access to that old git history for its normal test command.
 
+The same r8 binary (`ab33128`) and provider0.4.0 passed T8 Pro/N95 (16 EU)
+normal startup, dual FHD60/30-bit output, Metal, GL core/legacy, hardware HEVC,
+and one display sleep/wake on 2026-10-09. T8's Combo A/B and DDC1/2 were selected
+from VBT BDB249 with both HDMI wiring properties absent. No board-specific code
+was added. This does not qualify T8 hotplug, H.264, system sleep or its third
+TC HDMI port; existing boot-argument aliases were retained.
+
 ## Firmware connector defaults
 
 On admitted Tiger Lake and Alder Lake-N hardware, WhateverXe reads the ACPI
