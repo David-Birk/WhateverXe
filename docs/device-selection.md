@@ -108,3 +108,12 @@ The model fell back to the effective entry, Intel Graphics. CPU controls rejecte
 the unlisted physical ID without the override. The normal pair and configuration
 were restored afterward. This validates the unknown-ID path on known hardware;
 it does not qualify previously untested hardware, other backends or system sleep.
+
+The 0.2.1/0.5.0 pair was also live-tested on a Tiger Lake 9A49/rev1 system:
+physical-ID auto-selection resolved TigerLake/Display12/TGLGT2 and bound ABI3,
+without a device-id override or wiring property. `-wex-nopanel` replaced its old
+alias. Intel Iris Xe Graphics was published as the model; Metal retained the
+donor's internal name. Dual FHD60/30-bit HDMI + fixed DP, Metal/OpenGL,
+hardware H.264/HEVC, and display sleep/wake with post-wake Metal passed.
+The existing 96 MiB DVMT setting was retained. This run did not repeat physical
+hotplug, cold boot or system sleep on the new pair.
