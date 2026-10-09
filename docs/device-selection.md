@@ -25,10 +25,12 @@ backend or a non-Intel physical vendor do not fall back to another profile.
 Physical revision is retained; selecting Alder-N still requires revision0.
 Neither names nor fake IDs fabricate EU counts, memory sizes or board wiring.
 
-The old family selectors `-wex-adln` and `-wex-tgl` are removed. The existing
-feature/diagnostic controls (`-wex-display13`, `-wex-adln-native`,
-`-wex-adln-rcs-profile`, etc.) remain opt-ins; family detection does not enable
-these features automatically. `-wex-tgl-off` remains a disable switch.
+The old family selectors `-wex-adln` and `-wex-tgl` are removed. WEX 0.2.1 also removes the three normal feature switches
+`-wex-display13`, `-wex-adln-native` and `-wex-adln-rcs-profile`: an admitted
+Alder-N family / Display13 / ADLNSmall backend on the qualified kernel enables
+the framebuffer, native accelerator and normal RCS profile automatically.
+A catalogued Display13 device with no implemented GT backend remains rejected.
+The existing explicit context-trial switch remains separate from normal RCS setup. `-wex-tgl-off` remains a disable switch.
 An old ICL or other unsupported `device-id` spoof is now an explicit unsupported
 selector: remove it to use the physical profile or replace it with an intended
 implemented Xe ID. It is never silently ignored.

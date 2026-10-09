@@ -469,10 +469,12 @@ static uint64_t adlnInitialRCSReceipt[4+2*12] {1,2,12,0},adlnInitialRCSCopyRecei
 static uintptr_t adlnRuntimeRCSCaller,adlnRuntimeRCSParams;
 static uint64_t adlnRuntimeRCSReceipt[4+8*12] {1,8,12,0};
 static bool adlnNativeRCSProfileReady;
+// Selected once from the admitted backend; the explicit context trial stays separate.
+static bool adlnNativeRCSProfileRequested;
 static OSObject *adlnInitialRCSFactory(void *task,const void *params,uint8_t options) {
  const auto caller=reinterpret_cast<uintptr_t>(__builtin_return_address(0));
  const bool initial=caller==adlnInitialRCSCallers[0] || caller==adlnInitialRCSCallers[1];
- const bool runtime=(checkKernelArgument("-wex-adln-rcs-no-pocs") || checkKernelArgument("-wex-adln-rcs-profile")) && caller==adlnRuntimeRCSCaller;
+ const bool runtime=(checkKernelArgument("-wex-adln-rcs-no-pocs") || adlnNativeRCSProfileRequested) && caller==adlnRuntimeRCSCaller;
  if(initial && (reinterpret_cast<uintptr_t>(params)!=adlnInitialRCSParams || options!=2 ||
   !tglHost.owner || task!=Display13FBMemory::field<void *>(tglHost.owner,0x150)))
   PANIC("igfx","AlderLakeN initial RCS parameters/owner guard failed");
@@ -517,7 +519,7 @@ static __attribute__((noinline)) void adlnRunKernelContextTrial(IOService *owner
 static bool adlnKernelReuseCopy(void *context,void **image,void **posh) {
  const auto caller=reinterpret_cast<uintptr_t>(__builtin_return_address(0));
  bool result;
- if((checkKernelArgument("-wex-adln-initial-no-pocs") || checkKernelArgument("-wex-adln-rcs-profile")) && caller==adlnKernelReuseCopyCaller) {
+ if((checkKernelArgument("-wex-adln-initial-no-pocs") || adlnNativeRCSProfileRequested) && caller==adlnKernelReuseCopyCaller) {
   // Native copyContextImage unconditionally dereferences the POSH source.
   // At this exact caller, copy only the completed owned RCS image using the
   // same descriptor allocation contract. No fabricated POSH/golden contents.
@@ -583,7 +585,7 @@ static bool adlnKernelReuseCopy(void *context,void **image,void **posh) {
  } else result=FunctionCast(adlnKernelReuseCopy,adlnKernelReuseCopyOriginal)(context,image,posh);
  // Normal profile preserves native cleanup. It neither retains startup
  // contexts for a diagnostic nor injects another GPU request.
- if(checkKernelArgument("-wex-adln-rcs-profile"))return result;
+ if(adlnNativeRCSProfileRequested)return result;
  if(!adlnKernelReuseReady || caller!=adlnKernelReuseCopyCaller || !result)return result;
  auto q=adlnKernelReuseReceipt;q[1]=1;
  uint64_t owner=0,id=0,engine=0,descriptor=0,buffer=0,cpu=0,length=0;
@@ -764,7 +766,7 @@ static __attribute__((noinline)) void adlnPrepareRCSProfile(KernelPatcher &patch
   // The native GL caller uses RCS without POCS. Select its real factory
   // parameters for this one-shot comparison, never edit restore control.
   const bool glProfile=checkKernelArgument("-wex-adln-kernel-gl");
-  const bool normalProfile=checkKernelArgument("-wex-adln-rcs-profile");
+  const bool normalProfile=adlnNativeRCSProfileRequested;
   static const uint8_t startup[] {0x49,0x8B,0xBD,0x50,1,0,0,0x48,0x8D,0x35,8,0xAC,8,0,0xBA,2,0,0,0,0xE8,0xD0,0x5B,5,0};
   static const char *symbols[] {"__ZN17IGHardwareContext11withOptionsEP11IGAccelTaskRK23IGHardwareContextParamsh",
    "__ZN18IGAccelFIFOChannel18submitStampCommandEv","__ZN20IGHardwareRingBuffer13sleepForStampEPjjj",
@@ -2587,13 +2589,16 @@ void XE::init() {
 
 void XE::selectProfile(const XELP::Profile &profile) {
     xeProfile=profile;
-    adlnRequested=profile.admitted() && profile.family==XELP::Family::AlderLakeN;
+    adlnNativeRCSProfileRequested=false;
+    adlnRequested=profile.admitted() && profile.family==XELP::Family::AlderLakeN &&
+        profile.display==XELP::Display::XeLPD && profile.gt==XELP::GT::ADLNSmall;
     adlnDetected=adlnRequested;
     modDVMTCalcFix.available=profile.admitted();
     if(adlnRequested) {
         adlnKernelReady=!strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64");
-        adlnNativeRequested=adlnKernelReady && checkKernelArgument("-wex-adln-native");
-        display13FramebufferRequested=adlnKernelReady && checkKernelArgument("-wex-display13");
+        adlnNativeRequested=adlnKernelReady;
+        display13FramebufferRequested=adlnKernelReady;
+        adlnNativeRCSProfileRequested=adlnNativeRequested && !checkKernelArgument("-wex-adln-kernel-ctx");
         display13TraceEnabled=display13FramebufferRequested && checkKernelArgument("-wex-display13-trace");
         if(display13FramebufferRequested || adlnNativeRequested)currentFramebuffer=&kextIntelTGLFb;
         if(adlnNativeRequested) {
@@ -2648,7 +2653,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	pci->setProperty("N97DisplayStep", "D0");
 	pci->setProperty("N97GGC", pci->configRead16(0x50), 32);
 	if (!(pci->configRead16(4) & 2)) return;
-	const bool linearTest = checkKernelArgument("-wex-display13");
+	const bool linearTest = display13FramebufferRequested;
 	const bool gtTest = checkKernelArgument("-wex-adln-gt") || adlnNativeRequested;
 	auto map = pci->mapDeviceMemoryWithRegister(0x10,
 		(linearTest || gtTest ? 0 : kIOMapReadOnly) | kIOMapInhibitCache);
@@ -7783,7 +7788,7 @@ bool XE::processAlderLakeNTaskBoundary(KernelPatcher &patcher, size_t index, mac
 }
 
 bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
- if(adlnDetected && (checkKernelArgument("-wex-adln-kernel-ctx") || checkKernelArgument("-wex-adln-rcs-profile")))adlnPrepareRCSProfile(patcher,index,address,size);
+ if(adlnDetected && (checkKernelArgument("-wex-adln-kernel-ctx") || adlnNativeRCSProfileRequested))adlnPrepareRCSProfile(patcher,index,address,size);
    // Serialize only the two direct stores in detectEDRAM. The original
    // forcewake and 1000ms sleep remain outside the shared gate.
    {
@@ -9487,7 +9492,7 @@ uint32_t XE::wrapTGLLaneMask(void *port) {
 }
 
 bool XE::wrapTGLAcceleratorStart(IOService *that, IOService *provider) {
- if (callbackXE->adlnDetected && checkKernelArgument("-wex-adln-rcs-profile") && !adlnNativeRCSProfileReady) {
+ if (callbackXE->adlnDetected && adlnNativeRCSProfileRequested && !adlnNativeRCSProfileReady) {
   SYSLOG("igfx", "AlderLakeN native RCS profile qualification rejected accelerator start");
   return false;
  }

@@ -28,6 +28,8 @@ rows = re.findall(r'^\| `([^`]+)` \| (.*?) \|$', guide, re.M)
 assert {name for name, _ in rows} == used - external
 removed = [name for _, text in rows for name in re.findall(r'`([^`]+)`', text)]
 assert not set(removed) & used
+assert not {"-wex-display13", "-wex-adln-native", "-wex-adln-rcs-profile"} & used
+assert "const bool linearTest = display13FramebufferRequested;" in xe
 init = xe[xe.index('void XE::init() {'):xe.index('void XE::deinit()')]
 assert 'BaseDeviceInfo' not in init and 'CPU_MODEL' not in init
 entry = re.search(r'extern "C" kern_return_t tglStart\(.*?\n\}', provider, re.S).group()
@@ -59,6 +61,7 @@ struct XE {
  void selectProfile(const XELP::Profile &);
 };
 static XE *callbackXE;
+static bool adlnNativeRCSProfileRequested;
 using kern_return_t = int;
 struct kmod_info_t {};
 static constexpr int KERN_FAILURE=5, KERN_SUCCESS=0;
@@ -69,29 +72,43 @@ static XE boot(std::initializer_list<const char *> names, uint32_t pci=0x46D2808
  return xe;
 }
 int main() {
- // Physical selection needs no CPUID or family-selector boot argument.
- auto xe=boot({"-wex-display13","-wex-adln-native","-wex-adln-rcs-profile"});
- assert(xe.adlnRequested && xe.adlnKernelReady && xe.adlnNativeRequested && xe.display13FramebufferRequested);
- xe=boot({"-wex-display13","-wex-display13-trace"});
- assert(xe.display13TraceEnabled && !xe.adlnNativeRequested);
- xe=boot({"-n97native","-adlnnative","-n97display13","-display13"});
- assert(xe.adlnRequested && !xe.adlnNativeRequested && !xe.display13FramebufferRequested);
- for(const char *obsolete:{"-igfxn97","-igfxadln","-wex-adln","-wex-tgl"}) {
-  xe=boot({obsolete,"-wex-adln-native","-wex-display13"},0x12348086);
-  assert(!xe.adlnRequested && !xe.tglRequested && !xe.adlnNativeRequested);
+ // Every implemented ADL-N/Twin ID enables the qualified normal path without args.
+ XE xe;
+ for(uint32_t pci:{0x46D08086U,0x46D18086U,0x46D28086U,0x46D38086U,0x46D48086U}) {
+  xe=boot({},pci);
+  assert(xe.adlnRequested && xe.adlnKernelReady && xe.adlnNativeRequested && xe.display13FramebufferRequested);
+  assert(adlnNativeRCSProfileRequested && xe.tglAcceleratorRequested);
+  assert(xe.currentGraphics==&kextIntelTGL && xe.currentFramebuffer==&kextIntelTGLFb);
+ }
+ xe=boot({"-wex-display13-trace"});
+ assert(xe.display13TraceEnabled && xe.adlnNativeRequested && adlnNativeRCSProfileRequested);
+ xe=boot({"-wex-adln-kernel-ctx"});
+ assert(xe.adlnNativeRequested && xe.display13FramebufferRequested && !adlnNativeRCSProfileRequested);
+ xe=boot({});assert(adlnNativeRCSProfileRequested);
+ for(const char *obsolete:{"-igfxn97","-igfxadln","-wex-adln","-wex-tgl","-wex-display13","-wex-adln-native","-wex-adln-rcs-profile"}) {
+  xe=boot({obsolete},0x12348086);
+  assert(!xe.adlnRequested && !xe.tglRequested && !xe.adlnNativeRequested && !adlnNativeRCSProfileRequested);
  }
  xe=boot({},0x9A498086);
  assert(xe.tglRequested && xe.tglAcceleratorRequested && xe.tglProgramEnabled && !xe.tglNoPanel);
  xe=boot({"-wex-nopanel","-wex-tgl-prog-off"},0x9A408086);
  assert(xe.tglRequested && xe.tglNoPanel && !xe.tglProgramEnabled);
  xe=boot({"-wex-tgl-off"},0x9A498086);assert(!xe.tglRequested);
- xe=boot({"-wex-adln-native","-wex-display13"},0x12348086,0x46D28086);
+ xe=boot({},0x12348086,0x46D28086);
  assert(xe.adlnRequested && xe.adlnNativeRequested && xe.xeProfile.identity==0x12348086);
  xe=boot({},0x12348086,0x9A498086);assert(xe.tglRequested);
  xe=boot({},0x46A68086);assert(!xe.tglRequested && !xe.adlnRequested);
- args={"-wex-display13","-wex-adln-native"};version="unqualified";
+ for(uint32_t pci:{0x46A68086U,0x46808086U,0xA7A08086U}) {
+  xe=boot({},pci);assert(!xe.adlnNativeRequested && !xe.display13FramebufferRequested && !adlnNativeRCSProfileRequested);
+ }
+ xe=XE{};xe.selectProfile(XELP::identify(0x46D28086,1));
+ assert(!xe.adlnNativeRequested && !xe.display13FramebufferRequested && !adlnNativeRCSProfileRequested);
+ auto malformed=XELP::identify(0x46D28086,0);malformed.display=XELP::Display::XeD;
+ xe=XE{};xe.selectProfile(malformed);assert(!xe.adlnRequested && !adlnNativeRCSProfileRequested);
+ args={};version="unqualified";
  xe=XE{};xe.init();xe.selectProfile(XELP::identify(0x46D28086,0));
  assert(xe.adlnRequested && !xe.adlnKernelReady && !xe.adlnNativeRequested && !xe.display13FramebufferRequested);
+ assert(!adlnNativeRCSProfileRequested);
  assert(tglStart(nullptr,nullptr)==KERN_FAILURE);
  xe=XE{};xe.selectProfile(XELP::identify(0x9A498086,0));assert(!xe.tglRequested);
 
