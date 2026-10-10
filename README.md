@@ -2,73 +2,98 @@
 
 [日本語](README_ja.md)
 
-WhateverXe is a Lilu plugin that adapts Apple Intel graphics drivers for selected
+WhateverXe is a Lilu plugin that adapts Apple graphics drivers for selected
 Intel Xe-LP integrated GPUs. It is derived from WhateverGreen.
 
-This project is experimental. It requires the Xe root patch supplied by the
-[b00t0x OpenCore Legacy Patcher fork](https://github.com/b00t0x/OpenCore-Legacy-Patcher);
-installing WhateverXe alone is not sufficient.
+This project is experimental and requires the Xe root patch provided by the
+[OpenCore Legacy Patcher fork](https://github.com/b00t0x/OpenCore-Legacy-Patcher).
 
 ## Compatibility
 
-The current target is **macOS Big Sur build 20G1443 (x86_64)** with the matching
-Apple TGL kernel and userland drivers. Other OS builds and arbitrary driver
-versions are not supported by the current implementation.
+The current target is **macOS Big Sur build 20G1443**.
 
 | GPU family | Device IDs with an implemented backend |
 | --- | --- |
 | Tiger Lake | `9A40`, `9A49`, `9A78` |
-| Alder Lake-N / Twin Lake | `46D0`–`46D4` (PCI revision 0) |
+| Alder Lake-N / Twin Lake | `46D0`–`46D4` |
 
-An implemented backend is not a guarantee for every system using that ID.
-The device table also contains identification-only entries for other Intel GPUs;
-those entries do not enable graphics support. See [device selection](docs/device-selection.md).
+Support varies by system and connector layout. The table includes implemented
+backends, not a guarantee for every machine. See [device selection](docs/device-selection.md)
+for detailed selection conditions and overrides.
 
-The tested feature set includes dual external 1920×1080 at 60 Hz output,
-Metal/OpenGL, hardware HEVC, and display sleep/wake on Tiger Lake and Alder Lake-N.
-Hardware H.264 encode/decode has also been tested on Tiger Lake. Validation is
-limited to specific systems; USB-C/Thunderbolt display paths, three simultaneous
-displays, internal panels and system sleep are not established as supported
-configurations. Higher resolutions and other connector layouts require separate
-validation.
+Dual external 1920×1080 at 60 Hz output, Metal/OpenGL, hardware HEVC and display
+sleep/wake have been tested on Tiger Lake and Alder Lake-N. Hardware H.264
+encode/decode has also been tested on Tiger Lake. Three simultaneous displays,
+system sleep, higher resolutions and other connector layouts require further
+validation. USB-C and internal display support are planned below.
 
 ## Required components
 
 | Component | Role |
 | --- | --- |
 | Lilu | Runtime required by WhateverXe |
-| `WhateverXe.kext` (`org.b00t0x.WhateverXe`) | Graphics compatibility plugin, loaded through OpenCore after Lilu |
-| [b00t0x OpenCore Legacy Patcher](https://github.com/b00t0x/OpenCore-Legacy-Patcher) | Apply its Xe root patch to install the matching graphics stack |
-| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | Required for the modified root-patched graphics stack; install through OpenCore |
+| WhateverXe.kext | Load through OpenCore after Lilu |
+| [OpenCore Legacy Patcher fork](https://github.com/b00t0x/OpenCore-Legacy-Patcher) | Apply its Xe root patch to install the graphics stack |
+| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | Install through OpenCore for the modified root-patched graphics stack |
 
 The OCLP fork's Xe root patch is implemented but has not yet been released.
-Use the Xe-capable version of this fork. OCLP installs the required root-patch
-components and updates the kernel collection.
+OCLP installs its root components and updates the kernel collection.
 
 Extract `AMFIPass.kext` from the linked **Mod** archive, place it in
-`EFI/OC/Kexts`, and enable it in OpenCore's `Kernel > Add`. Replace an existing
-AMFIPass with this Mod build; do not load both copies.
+`EFI/OC/Kexts`, and enable it in `Kernel > Add`. Replace an existing AMFIPass
+with this Mod build; do not load both copies.
 
-Use WhateverXe with the matching OCLP root patch, and retain a working EFI/root
-configuration for recovery. Disabling WhateverXe alone while the root-patched
-drivers remain active can prevent startup.
-
-WhateverGreen and WhateverXe must not be enabled together. Co-installation,
-including mixed-GPU configurations, is not supported.
+WhateverGreen and WhateverXe must not be enabled together, including in
+mixed-GPU configurations.
 
 ## Configuration
 
-GPU selection is automatic from the PCI device ID. A `device-id` override is an
-advanced backend selector, not a way to supply missing hardware capabilities.
+GPU selection is automatic from the PCI device ID. Connector routing is read
+from firmware VBT where supported; fixed HDMI and fixed DisplayPort layouts
+normally need no manual wiring properties. Advanced `device-id` overrides are
+described in [device selection](docs/device-selection.md).
 
-Connector routing is read from firmware VBT where the current backend can
-interpret it. Supported fixed HDMI and fixed DisplayPort layouts do not normally
-need manual wiring properties. Automatic detection does not add USB-C, dock or
-other unsupported transports. On Tiger Lake systems without an internal display,
-use `-wex-nopanel`.
+### Required boot arguments
 
-- [Boot arguments and migration](docs/boot-arguments.md)
-- [Device selection and DeviceProperties](docs/device-selection.md)
+Add the following to OpenCore's `boot-args`:
+
+```text
+-allow3d -disablegfxfirmware
+```
+
+| Argument | Purpose |
+| --- | --- |
+| `-allow3d` | Enable the Apple driver's 3D path. |
+| `-disablegfxfirmware` | Disable the Apple driver's graphics-firmware loading path for the current backend. |
+| `-wex-nopanel` | Additionally required on Tiger Lake systems without an internal display. Alder Lake-N / Twin Lake currently builds an external-display topology automatically and does not use this flag. |
+
+No family-selection or per-feature enable arguments are required for
+Alder Lake-N / Twin Lake.
+
+### Optional boot arguments
+
+| Argument | Purpose |
+| --- | --- |
+| `-igfxdvmt` | Correct DVMT size calculation for special GMS encodings. It does not increase allocated memory; ordinary GMS values need no correction. |
+| `gfxrst=` | Boot framebuffer handoff: 0 automatic (default), 1 reset, 2 copy, 3 clear, 4 disable. |
+| `-wexdbg` | Enable debug logging in a debug build. |
+| `-wexoff` | Disable WhateverXe. |
+| `-wexbeta` | Bypass the plugin's OS-version check. Exact kernel/driver checks still apply. |
+| `-wex-tgl-off` | Disable the Tiger Lake path. |
+
+## Roadmap
+
+### Planned
+
+- macOS Monterey through Tahoe support using OCLP's capabilities
+- Alder Lake and Raptor Lake S/H/P/U support
+- USB-C display output
+- Internal displays
+
+### Not Planned
+
+- Xe-LPG support
+- Xe2 and later architectures
 
 ## Build and test
 
@@ -81,15 +106,13 @@ python3 tools/build.py --release
 python3 tools/test.py
 ```
 
-The build produces kexts and a source manifest in `build/`. CPU tests do not
-establish compatibility with a physical GPU. Optional donor replay tests accept
-`--donor /path/to/AppleIntelTGLGraphicsFramebuffer` and
-`--accelerator /path/to/AppleIntelTGLGraphics`; they require the exact driver
-binaries accepted by the respective tests. WhateverGreen source is not a build
-dependency.
+Kexts and a source manifest are written to `build/`. Optional donor replay tests
+accept `--donor /path/to/AppleIntelTGLGraphicsFramebuffer` and
+`--accelerator /path/to/AppleIntelTGLGraphics`, using the exact binaries accepted
+by each test. CPU tests do not establish physical GPU compatibility.
+WhateverGreen source is not a build dependency.
 
 ## License and credits
 
 WhateverXe retains WhateverGreen's copyright notices and BSD-3-Clause license.
-See [LICENSE.txt](LICENSE.txt). The historical [extraction map](docs/extraction-map.json)
-records its source origins. Lilu and MacKernelSDK are separate dependencies.
+See [LICENSE.txt](LICENSE.txt). Lilu and MacKernelSDK are separate dependencies.

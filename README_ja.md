@@ -4,46 +4,80 @@
 
 WhateverXeは、一部のIntel Xe-LP内蔵GPU向けにAppleのグラフィックスドライバを適応させるLiluプラグインです。WhateverGreenを基に開発しています。
 
-本プロジェクトは実験段階です。[b00t0x版OpenCore Legacy Patcher](https://github.com/b00t0x/OpenCore-Legacy-Patcher)が提供するXe root patchが必要であり、WhateverXeだけでは動作しません。
+本プロジェクトは実験段階であり、[OpenCore Legacy Patcherのfork](https://github.com/b00t0x/OpenCore-Legacy-Patcher)が提供するXe root patchを必要とします。
 
 ## 対応範囲
 
-現在の対象は、対応するApple TGLのカーネル／ユーザーランドドライバを組み合わせた **macOS Big Sur build 20G1443（x86_64）** です。現在の実装は、他のOSビルドや任意のドライババージョンには対応していません。
+現在の対象は **macOS Big Sur build 20G1443** です。
 
 | GPUファミリー | バックエンド実装があるdevice ID |
 | --- | --- |
 | Tiger Lake | `9A40`、`9A49`、`9A78` |
-| Alder Lake-N / Twin Lake | `46D0`–`46D4`（PCI revision 0） |
+| Alder Lake-N / Twin Lake | `46D0`–`46D4` |
 
-バックエンドが実装されていても、そのIDを使うすべての機種での動作を保証するものではありません。デバイステーブルには識別用の情報だけを持つ他のIntel GPUも含まれますが、それらのグラフィックス機能は有効になりません。[デバイス選択](docs/device-selection.md)を参照してください。
+対応状況は機種やコネクタ構成によって異なります。この表はバックエンドの実装範囲を示すもので、すべての機種での動作を保証するものではありません。詳細な選択条件と上書き設定は[デバイス選択](docs/device-selection.md)を参照してください。
 
-Tiger LakeとAlder Lake-Nの特定の実機で、外部2画面の1920×1080・60Hz出力、Metal/OpenGL、ハードウェアHEVC、画面の消灯／復帰を確認しています。Tiger LakeではハードウェアH.264のエンコード／デコードも確認しています。USB-C/Thunderbolt経由の画面出力、3画面同時出力、内蔵パネル、システムスリープは、対応構成として確立していません。より高い解像度や他のコネクタ構成は別途検証が必要です。
+Tiger LakeとAlder Lake-Nで、外部2画面の1920×1080・60Hz出力、Metal/OpenGL、ハードウェアHEVC、画面の消灯／復帰を確認しています。Tiger LakeではハードウェアH.264のエンコード／デコードも確認しています。3画面同時出力、システムスリープ、より高い解像度や他のコネクタ構成は追加検証が必要です。USB-Cと内蔵ディスプレイへの対応は下記ロードマップに含まれます。
 
 ## 必須構成
 
 | コンポーネント | 役割 |
 | --- | --- |
 | Lilu | WhateverXeの動作に必要なランタイム |
-| `WhateverXe.kext`（`org.b00t0x.WhateverXe`） | グラフィックス互換プラグイン。OpenCoreでLiluより後に読み込む |
-| [b00t0x版OpenCore Legacy Patcher](https://github.com/b00t0x/OpenCore-Legacy-Patcher) | Xe root patchを適用し、対応するグラフィックス構成を導入する |
+| WhateverXe.kext | OpenCoreでLiluより後に読み込む |
+| [OpenCore Legacy Patcherのfork](https://github.com/b00t0x/OpenCore-Legacy-Patcher) | Xe root patchを適用してグラフィックス構成を導入する |
 | [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | 改変されたroot patchのグラフィックス構成に必要。OpenCoreで導入する |
 
-このOCLP forkにはXe root patchが実装済みですが、まだリリース前です。このforkのXe対応版を使用してください。root patchに必要な構成要素の導入とkernel collectionの更新はOCLPが行います。
+このOCLP forkにはXe root patchが実装済みですが、まだリリース前です。rootの構成要素の導入とkernel collectionの更新はOCLPが行います。
 
-リンク先の **Mod版** アーカイブから`AMFIPass.kext`を展開し、`EFI/OC/Kexts`へ配置して、OpenCoreの`Kernel > Add`で有効にしてください。既存のAMFIPassがある場合はこのMod版へ置き換え、両方を同時に読み込まないでください。
+リンク先の **Mod版** アーカイブから`AMFIPass.kext`を展開し、`EFI/OC/Kexts`へ配置して、`Kernel > Add`で有効にしてください。既存のAMFIPassがある場合はこのMod版へ置き換え、両方を同時に読み込まないでください。
 
-WhateverXeと対応するOCLPのroot patchを組み合わせ、復旧用に動作するEFI／root構成を保持してください。root patchのドライバを有効にしたままWhateverXeだけを無効にすると、起動できなくなる場合があります。
-
-WhateverGreenとWhateverXeは同時に有効にしないでください。複数GPUの構成を含め、併用には対応していません。
+複数GPUの構成を含め、WhateverGreenとWhateverXeは同時に有効にしないでください。
 
 ## 設定
 
-GPUはPCI device IDから自動選択します。`device-id`の上書きは高度な設定として既存バックエンドを選択するもので、不足するハードウェア機能を補うものではありません。
+GPUはPCI device IDから自動選択します。対応範囲内ではファームウェアのVBTから配線を読み取るため、固定HDMI／固定DisplayPort構成は通常、配線propertyの手動指定が不要です。高度な設定としての`device-id`上書きは[デバイス選択](docs/device-selection.md)で説明しています。
 
-現在のバックエンドが解釈できる範囲で、ファームウェアのVBTからコネクタの配線を読み取ります。対応する固定HDMI／固定DisplayPort構成では、通常は配線propertyの手動指定は不要です。自動検出によってUSB-C、ドックなどの未対応経路が使えるようになるわけではありません。内蔵画面のないTiger Lake機では`-wex-nopanel`を指定してください。
+### 必須ブート引数
 
-- [ブート引数と移行](docs/boot-arguments.md)
-- [デバイス選択とDeviceProperties](docs/device-selection.md)
+OpenCoreの`boot-args`に以下を追加してください。
+
+```text
+-allow3d -disablegfxfirmware
+```
+
+| 引数 | 用途 |
+| --- | --- |
+| `-allow3d` | Appleドライバの3D処理を有効にする。 |
+| `-disablegfxfirmware` | 現在のバックエンドで、Appleドライバのグラフィックスファームウェア読み込みを無効にする。 |
+| `-wex-nopanel` | 内蔵画面のないTiger Lake機で追加する。現在のAlder Lake-N / Twin Lakeは外部画面用の構成を自動生成するため、この引数を使用しない。 |
+
+Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追加する必要はありません。
+
+### 任意のブート引数
+
+| 引数 | 用途 |
+| --- | --- |
+| `-igfxdvmt` | 特殊なGMS値のDVMT容量計算を補正する。確保メモリを増やすものではなく、通常のGMS値では補正不要。 |
+| `gfxrst=` | 起動時framebufferの引継ぎ方式。0：自動（既定）、1：reset、2：copy、3：clear、4：無効。 |
+| `-wexdbg` | debug buildでログを有効にする。 |
+| `-wexoff` | WhateverXeを無効にする。 |
+| `-wexbeta` | プラグインのOSバージョンチェックを回避する。kernel／driverの一致条件は維持する。 |
+| `-wex-tgl-off` | Tiger Lakeの処理を無効にする。 |
+
+## ロードマップ
+
+### Planned
+
+- OCLPの機能を利用したmacOS Monterey〜Tahoe対応
+- Alder Lake／Raptor LakeのS/H/P/U対応
+- USB-C画面出力対応
+- 内蔵ディスプレイ対応
+
+### Not Planned
+
+- Xe-LPG対応
+- Xe2以降のアーキテクチャへの対応
 
 ## ビルドとテスト
 
@@ -54,8 +88,8 @@ python3 tools/build.py --release
 python3 tools/test.py
 ```
 
-ビルド結果のkextとソースのmanifestは`build/`に出力されます。CPUテストだけで実GPUの互換性が確認できるわけではありません。任意のdonor再生試験には`--donor /path/to/AppleIntelTGLGraphicsFramebuffer`と`--accelerator /path/to/AppleIntelTGLGraphics`を指定できますが、各試験が受け付ける正確なドライババイナリが必要です。ビルドにWhateverGreenのソースは不要です。
+kextとソースのmanifestは`build/`に出力されます。任意のdonor再生試験には`--donor /path/to/AppleIntelTGLGraphicsFramebuffer`と`--accelerator /path/to/AppleIntelTGLGraphics`を指定します。各試験が受け付ける正確なバイナリが必要です。CPUテストだけで実GPUの互換性が確認できるわけではありません。ビルドにWhateverGreenのソースは不要です。
 
 ## ライセンスとクレジット
 
-WhateverXeはWhateverGreenの著作権表示とBSD-3-Clauseライセンスを継承しています。[LICENSE.txt](LICENSE.txt)を参照してください。[抽出時の対応表](docs/extraction-map.json)にソースの由来を記録しています。LiluとMacKernelSDKは別の依存コンポーネントです。
+WhateverXeはWhateverGreenの著作権表示とBSD-3-Clauseライセンスを継承しています。[LICENSE.txt](LICENSE.txt)を参照してください。LiluとMacKernelSDKは別の依存コンポーネントです。

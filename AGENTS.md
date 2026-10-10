@@ -14,7 +14,9 @@ Keep README.md and README_ja.md synchronized in the same change, including
 requirements, compatibility, links and examples. Do not add personal names or
 private identifying information to user documentation without explicit consent.
 
-Public docs describe current settings and relevant upgrade requirements. Keep
+Document required and optional boot arguments in both READMEs. Do not add
+migration instructions for unreleased internal revisions.
+Public docs describe current settings and requirements. Keep
 investigation notes, implementation diaries, internal diagnostic layouts,
 experimental procedures and live machine evidence in the maintainer's private
 project documentation, outside this repository. Do not link public instructions
