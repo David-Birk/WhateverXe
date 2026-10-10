@@ -38,7 +38,7 @@ Download the **RELEASE** ZIP from [Releases](https://github.com/b00t0x/WhateverX
 | [OpenCore Legacy Patcher fork](https://github.com/b00t0x/OpenCore-Legacy-Patcher) | Apply its Xe root patch to install the graphics stack |
 | [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | Install through OpenCore for the modified root-patched graphics stack |
 
-The OCLP fork's Xe root patch is implemented but has not yet been released.
+Download the OCLP fork from its [Releases page](https://github.com/b00t0x/OpenCore-Legacy-Patcher/releases).
 OCLP installs its root components and updates the kernel collection.
 
 Extract `AMFIPass.kext` from the linked **Mod** archive, place it in
