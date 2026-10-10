@@ -53,6 +53,24 @@ from firmware VBT where supported; fixed HDMI and fixed DisplayPort layouts
 normally need no manual wiring properties. Advanced `device-id` overrides are
 described in [device selection](docs/device-selection.md).
 
+### DVMT
+
+Set **DVMT Pre-Allocated to 96MB** in the BIOS/UEFI settings where possible.
+
+If it is fixed at **60MB**, add `-igfxdvmt` to `boot-args` and set both properties
+below on the iGPU under OpenCore's `DeviceProperties > Add`
+(usually `PciRoot(0x0)/Pci(0x2,0x0)`).
+
+| Property | Type | Value (hex) |
+| --- | --- | --- |
+| `framebuffer-patch-enable` | Data | `01000000` |
+| `framebuffer-stolenmem` | Data | `0000C003` |
+
+These Data values use little-endian byte order. `-igfxdvmt` corrects the capacity
+calculation, while the properties limit the display memory pool to fit within
+60MB. Neither setting increases the memory allocated by the firmware.
+With 96MB, these DVMT-specific settings are unnecessary.
+
 ### Required boot arguments
 
 Add the following to OpenCore's `boot-args`:
@@ -74,7 +92,6 @@ Alder Lake-N / Twin Lake.
 
 | Argument | Purpose |
 | --- | --- |
-| `-igfxdvmt` | Correct DVMT size calculation for special GMS encodings. It does not increase allocated memory; ordinary GMS values need no correction. |
 | `gfxrst=` | Boot framebuffer handoff: 0 automatic (default), 1 reset, 2 copy, 3 clear, 4 disable. |
 | `-wexdbg` | Enable debug logging in a debug build. |
 | `-wexoff` | Disable WhateverXe. |

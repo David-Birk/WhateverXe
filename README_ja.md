@@ -38,6 +38,19 @@ Tiger LakeとAlder Lake-Nで、外部2画面の1920×1080・60Hz出力、Metal/O
 
 GPUはPCI device IDから自動選択します。対応範囲内ではファームウェアのVBTから配線を読み取るため、固定HDMI／固定DisplayPort構成は通常、配線propertyの手動指定が不要です。高度な設定としての`device-id`上書きは[デバイス選択](docs/device-selection.md)で説明しています。
 
+### DVMT
+
+BIOS/UEFIで変更できる場合は、**DVMT Pre-Allocatedを96MBに設定することを推奨します**。
+
+**60MBから変更できない場合**は、`boot-args`に`-igfxdvmt`を追加し、OpenCoreの`DeviceProperties > Add`にあるiGPUの項目（通常は`PciRoot(0x0)/Pci(0x2,0x0)`）へ以下の2つを設定してください。
+
+| Property | 型 | 値（16進数） |
+| --- | --- | --- |
+| `framebuffer-patch-enable` | Data | `01000000` |
+| `framebuffer-stolenmem` | Data | `0000C003` |
+
+Data値はリトルエンディアンです。`-igfxdvmt`は容量計算を補正し、DevicePropertiesは表示用メモリ領域を60MB内に収めます。ファームウェアが確保したメモリを増やす設定ではありません。96MBの場合、これらのDVMT用設定は不要です。
+
 ### 必須ブート引数
 
 OpenCoreの`boot-args`に以下を追加してください。
@@ -58,7 +71,6 @@ Alder Lake-N / Twin Lakeで世代選択や個別機能の有効化引数を追�
 
 | 引数 | 用途 |
 | --- | --- |
-| `-igfxdvmt` | 特殊なGMS値のDVMT容量計算を補正する。確保メモリを増やすものではなく、通常のGMS値では補正不要。 |
 | `gfxrst=` | 起動時framebufferの引継ぎ方式。0：自動（既定）、1：reset、2：copy、3：clear、4：無効。 |
 | `-wexdbg` | debug buildでログを有効にする。 |
 | `-wexoff` | WhateverXeを無効にする。 |
