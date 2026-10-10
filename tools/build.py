@@ -3,7 +3,7 @@
 import argparse,hashlib,json,plistlib,subprocess
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-def run(cmd): subprocess.run([str(x) for x in cmd],check=True)
+def run(cmd): subprocess.run([str(x) for x in cmd],check=True,cwd=ROOT)
 def main():
  p=argparse.ArgumentParser(description=__doc__)
  p.add_argument('--sdk',type=Path,default=ROOT/'MacKernelSDK')
@@ -13,6 +13,9 @@ def main():
  a=p.parse_args();out=a.output.resolve();out.mkdir(parents=True,exist_ok=True)
  sdk=a.sdk.resolve();lilu=a.lilu.resolve()/'Contents/Resources'
  base=['xcrun','clang++','-arch','x86_64','-std=c++17',('-O2' if a.release else '-O0'),'-g','-mkernel','-fapple-kext','-fno-exceptions','-fno-rtti','-fno-stack-protector','-fno-builtin','-fno-asynchronous-unwind-tables','-mno-red-zone','-nostdinc','-DKERNEL','-DKERNEL_PRIVATE','-D__APPLE__','-D__MACH__','-I'+str(sdk/'Headers'),'-I'+str(lilu),'-I'+str(ROOT/'WhateverXe'),'-mmacosx-version-min=10.15','-Wall','-Wextra','-Wno-unused-parameter','-Wno-deprecated-declarations','-Wno-vla','-Wno-ossharedptr-misuse']
+ # Keep build-machine paths out of distributed binaries and debug symbols.
+ base+=['-fdebug-compilation-dir=.', '-ffile-prefix-map='+str(ROOT)+'=/WhateverXe',
+        '-ffile-prefix-map='+str(sdk)+'=/MacKernelSDK', '-ffile-prefix-map='+str(lilu)+'=/Lilu']
  manifest={}
  for name,version,sources in [('WhateverXe','0.2.2',sorted((ROOT/'WhateverXe').glob('*.cpp'))+[lilu/'Library/plugin_start.cpp']),('AppleIntelTGLCompat','0.5.0',[ROOT/'AppleIntelTGLCompat/AppleIntelTGLCompat.cpp'])]:
   bundle=out/(name+'.kext')/'Contents';(bundle/'MacOS').mkdir(parents=True,exist_ok=True);objdir=out/name;objdir.mkdir(exist_ok=True)
@@ -42,7 +45,7 @@ def main():
    unresolved=subprocess.check_output(['xcrun','nm','-u',str(exe)],text=True)
    assert not any(x in unresolved for x in ['chkstk_darwin','___memcpy_chk','___memmove_chk','DispatchE5IORPC']), 'userspace/DriverKit ABI imported into kernel plugin'
    assert not any(x in unresolved for x in ['__ZN2XE','__ZN6XeHost','__ZN11DVMTCalcFix']), 'unresolved local implementation'
-  manifest[name]={'identifier':ident,'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'source_sha256':{str(s.relative_to(ROOT)) if s.is_relative_to(ROOT) else str(s):hashlib.sha256(s.read_bytes()).hexdigest() for s in sources}}
+  manifest[name]={'identifier':ident,'version':version,'configuration':'RELEASE' if a.release else 'DEBUG','sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'source_sha256':{str(s.relative_to(ROOT)) if s.is_relative_to(ROOT) else 'Lilu/'+str(s.relative_to(lilu)):hashlib.sha256(s.read_bytes()).hexdigest() for s in sources}}
  manifest['headers']={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for d in ['WhateverXe','AppleIntelTGLCompat'] for p in sorted((ROOT/d).glob('*.hpp'))}
  (out/'build-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
  print(json.dumps({n:v['sha256'] for n,v in manifest.items() if n!='headers'},indent=2))

@@ -27,6 +27,8 @@ encode/decode has also been tested on Tiger Lake. Three simultaneous displays,
 system sleep, higher resolutions and other connector layouts require further
 validation. USB-C and internal display support are planned below.
 
+Download the **RELEASE** ZIP from [Releases](https://github.com/b00t0x/WhateverXe/releases). The DEBUG ZIP is for troubleshooting.
+
 ## Required components
 
 | Component | Role |
