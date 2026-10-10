@@ -1,12 +1,13 @@
 # WhateverXe
 
-WhateverXe is a Lilu plugin that adapts Apple Intel graphics drivers for selected
-Intel Xe-LP integrated GPUs. It is derived from WhateverGreen and includes
-AppleIntelTGLCompat, a companion kext that supplies methods required by the Apple
-drivers.
+[日本語](README_ja.md)
 
-This project is experimental. It requires a matching patched Apple graphics
-stack; installing the two kexts alone is not sufficient.
+WhateverXe is a Lilu plugin that adapts Apple Intel graphics drivers for selected
+Intel Xe-LP integrated GPUs. It is derived from WhateverGreen.
+
+This project is experimental. It requires the Xe root patch supplied by the
+[b00t0x OpenCore Legacy Patcher fork](https://github.com/b00t0x/OpenCore-Legacy-Patcher);
+installing WhateverXe alone is not sufficient.
 
 ## Compatibility
 
@@ -37,27 +38,28 @@ validation.
 | --- | --- |
 | Lilu | Runtime required by WhateverXe |
 | `WhateverXe.kext` (`org.b00t0x.WhateverXe`) | Graphics compatibility plugin, loaded through OpenCore after Lilu |
-| `AppleIntelTGLCompat.kext` (`org.b00t0x.AppleIntelTGLCompat`) | Companion for the matching Apple drivers, included in the patched System kernel collection |
-| Matching Apple graphics root payload | Kernel and userland drivers required for display and acceleration |
+| [b00t0x OpenCore Legacy Patcher](https://github.com/b00t0x/OpenCore-Legacy-Patcher) | Apply its Xe root patch to install the matching graphics stack |
+| [AMFIPass v1.4.1 Mod](https://github.com/b00t0x/OpenCore-Legacy-Patcher/blob/mod/payloads/Kexts/Acidanthera/AMFIPass-v1.4.1-Mod-RELEASE.zip) | Required for the modified root-patched graphics stack; install through OpenCore |
 
-Apple driver binaries are not included in this source repository. A complete
-root-patch installation and its kernel-collection setup are required separately;
-this repository does not provide a general-purpose installer.
+The OCLP fork's Xe root patch is implemented but has not yet been released.
+Use the Xe-capable version of this fork. OCLP installs the required root-patch
+components and updates the kernel collection.
 
-Use compatible versions of WhateverXe and AppleIntelTGLCompat. The current
-WhateverXe 0.2.x line uses AppleIntelTGLCompat 0.5.0. Do not mix it with the older
-0.4.x provider. Retain a complete working EFI/root configuration for recovery.
-Disabling WhateverXe alone while its Apple drivers remain active can prevent
-startup.
+Extract `AMFIPass.kext` from the linked **Mod** archive, place it in
+`EFI/OC/Kexts`, and enable it in OpenCore's `Kernel > Add`. Replace an existing
+AMFIPass with this Mod build; do not load both copies.
+
+Use WhateverXe with the matching OCLP root patch, and retain a working EFI/root
+configuration for recovery. Disabling WhateverXe alone while the root-patched
+drivers remain active can prevent startup.
 
 WhateverGreen and WhateverXe must not be enabled together. Co-installation,
 including mixed-GPU configurations, is not supported.
 
 ## Configuration
 
-GPU selection is automatic from the PCI device ID. AppleIntelTGLCompat has no
-boot arguments. A `device-id` override is an advanced backend selector, not a
-way to supply missing hardware capabilities.
+GPU selection is automatic from the PCI device ID. A `device-id` override is an
+advanced backend selector, not a way to supply missing hardware capabilities.
 
 Connector routing is read from firmware VBT where the current backend can
 interpret it. Supported fixed HDMI and fixed DisplayPort layouts do not normally
@@ -79,7 +81,7 @@ python3 tools/build.py --release
 python3 tools/test.py
 ```
 
-The build produces both kexts and a source manifest in `build/`. CPU tests do not
+The build produces kexts and a source manifest in `build/`. CPU tests do not
 establish compatibility with a physical GPU. Optional donor replay tests accept
 `--donor /path/to/AppleIntelTGLGraphicsFramebuffer` and
 `--accelerator /path/to/AppleIntelTGLGraphics`; they require the exact driver
@@ -91,4 +93,3 @@ dependency.
 WhateverXe retains WhateverGreen's copyright notices and BSD-3-Clause license.
 See [LICENSE.txt](LICENSE.txt). The historical [extraction map](docs/extraction-map.json)
 records its source origins. Lilu and MacKernelSDK are separate dependencies.
-Device-name reference data was provided by b00t0x.

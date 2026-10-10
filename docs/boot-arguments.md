@@ -42,12 +42,12 @@ configuration requirements.
 - Remove family selectors `-wex-adln`, `-wex-tgl` and their older spellings. Use automatic PCI selection or the explicit [device-id override](device-selection.md#advanced-override-device-id).
 - Remove `-wex-display13`, `-wex-adln-native` and `-wex-adln-rcs-profile`; these normal features are automatic.
 
-Old names and N97 aliases are not accepted. When moving from the old
-argument-dependent provider, update WhateverXe, AppleIntelTGLCompat, the provider
-in the System kernel collection, and the EFI arguments as a matching set.
-WhateverXe 0.2.x uses provider 0.5.0; a WEX-only update within that pairing does
-not itself require rebuilding the provider's kernel collection unless the
-release instructions say otherwise.
+Old names and N97 aliases are not accepted. When migrating an older setup,
+use the matching Xe root patch from the
+[b00t0x OpenCore Legacy Patcher fork](https://github.com/b00t0x/OpenCore-Legacy-Patcher)
+and update WhateverXe and the EFI arguments accordingly. OCLP manages the root
+components and kernel collection. Install the AMFIPass Mod build linked in the
+[required components](../README.md#required-components).
 
 The historical TGLCPUMemoryProbe and TGLLinkProbe kexts are not runtime
 requirements. When migrating an installation that included them, remove their

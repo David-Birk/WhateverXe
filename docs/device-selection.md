@@ -42,14 +42,14 @@ used instead. Names are descriptive labels and do not control functionality or
 EU counts. SKU and system configuration can affect Intel's marketing name.
 Metal may still report the Apple driver's internal name.
 
-Device-name reference data was provided by b00t0x. PCI ID/family groupings were
-checked against Linux v6.12's i915 tables; individual marketing names are not a
-claim of independently verified SKU branding.
+PCI ID/family groupings were checked against Linux v6.12's i915 tables; individual
+marketing names are not a claim of independently verified SKU branding.
 
 ## Upgrading
 
-WhateverXe 0.2.x uses AppleIntelTGLCompat 0.5.0. Upgrade both from the old
-0.1.x/0.4.x combination, including the provider in the System kernel collection.
-The provider alone does not supply a complete graphics stack. Follow the
-[boot-argument migration notes](boot-arguments.md#migration) and retain a matching
-EFI/root configuration for recovery.
+Use the matching Xe root patch from the
+[b00t0x OpenCore Legacy Patcher fork](https://github.com/b00t0x/OpenCore-Legacy-Patcher).
+OCLP installs its root components and updates the kernel collection. See the
+[required components](../README.md#required-components), including AMFIPass Mod,
+and the [boot-argument migration notes](boot-arguments.md#migration). Retain a
+matching EFI/root configuration for recovery.

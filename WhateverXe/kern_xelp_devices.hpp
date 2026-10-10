@@ -1,5 +1,5 @@
 // PCI families verified against Linux v6.12 i915_pciids.h.
-// Display-name suggestions: Provided by b00t0x. See docs/device-selection.md.
+// Display-name suggestions and limitations: see docs/device-selection.md.
 // No EU, board wiring or transport assumptions belong in this table.
 #ifndef KERN_XELP_DEVICES_HPP
 #define KERN_XELP_DEVICES_HPP

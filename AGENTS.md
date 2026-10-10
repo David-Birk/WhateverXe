@@ -10,6 +10,9 @@ README is the user-facing entry point: purpose, current compatibility, required
 components, configuration links, build instructions and license. Update those
 sections when user-visible behavior changes; do not append implementation or
 per-machine test history after each change.
+Keep README.md and README_ja.md synchronized in the same change, including
+requirements, compatibility, links and examples. Do not add personal names or
+private identifying information to user documentation without explicit consent.
 
 Public docs describe current settings and relevant upgrade requirements. Keep
 investigation notes, implementation diaries, internal diagnostic layouts,
