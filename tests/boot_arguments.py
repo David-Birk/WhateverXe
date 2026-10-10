@@ -2,6 +2,7 @@
 """Exercise plugin selection and argument-independent provider startup."""
 from pathlib import Path
 import re
+import json
 import subprocess
 import tempfile
 
@@ -23,10 +24,10 @@ for array, expected in [('Off', '-wexoff'), ('Debug', '-wexdbg'), ('Beta', '-wex
 assert external <= used
 assert all(name.startswith('-wex') or name in external for name in used), used
 assert not (root / 'WhateverXe/kern_boot_args.hpp').exists()
-guide = (root / 'docs/boot-arguments.md').read_text()
-rows = re.findall(r'^\| `([^`]+)` \| (.*?) \|$', guide, re.M)
-assert {name for name, _ in rows} == used - external
-removed = [name for _, text in rows for name in re.findall(r'`([^`]+)`', text)]
+# Keep the complete diagnostic namespace regression independent of user docs.
+names = json.loads((root / 'tests/fixtures/boot_argument_names.json').read_text())
+assert set(names) == used - external
+removed = [name for aliases in names.values() for name in aliases]
 assert not set(removed) & used
 assert not {"-wex-display13", "-wex-adln-native", "-wex-adln-rcs-profile"} & used
 assert "const bool linearTest = display13FramebufferRequested;" in xe

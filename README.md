@@ -1,170 +1,94 @@
 # WhateverXe
 
-Xe-LP compatibility plugin for Lilu, extracted from the Xe development fork of WhateverGreen at 0570802.
-Bundle: `WhateverXe.kext`, identifier: `org.b00t0x.WhateverXe`.
-Provider: `AppleIntelTGLCompat.kext`, identifier: `org.b00t0x.AppleIntelTGLCompat`.
+WhateverXe is a Lilu plugin that adapts Apple Intel graphics drivers for selected
+Intel Xe-LP integrated GPUs. It is derived from WhateverGreen and includes
+AppleIntelTGLCompat, a companion kext that supplies methods required by the Apple
+drivers.
 
-The provider supplies missing methods for the exact Apple TGL donor; it is not a GPU driver by itself. Existing Apple kernel/userland donors remain required. No new GPU or transport is admitted by this extraction. AppleIntelTGLCompat reads no boot arguments: TGL-specific operations and shared port probing use the common physical/effective PCI profile, independently validated by the provider. See [device selection and names](docs/device-selection.md).
+This project is experimental. It requires a matching patched Apple graphics
+stack; installing the two kexts alone is not sufficient.
 
-Upstream WhateverGreen copyright and BSD license are retained. See LICENSE.txt and docs/extraction-map.json. Lilu and MacKernelSDK are separate build dependencies, not vendored source.
+## Compatibility
 
-Legacy N97-prefixed IORegistry keys remain for existing collectors. Boot argument aliases have been removed. Internal names distinguish Display13, AlderLakeN, XELP and TGL donor contracts. This does not qualify every GPU with those display generations.
+The current target is **macOS Big Sur build 20G1443 (x86_64)** with the matching
+Apple TGL kernel and userland drivers. Other OS builds and arbitrary driver
+versions are not supported by the current implementation.
+
+| GPU family | Device IDs with an implemented backend |
+| --- | --- |
+| Tiger Lake | `9A40`, `9A49`, `9A78` |
+| Alder Lake-N / Twin Lake | `46D0`–`46D4` (PCI revision 0) |
+
+An implemented backend is not a guarantee for every system using that ID.
+The device table also contains identification-only entries for other Intel GPUs;
+those entries do not enable graphics support. See [device selection](docs/device-selection.md).
+
+The tested feature set includes dual external 1920×1080 at 60 Hz output,
+Metal/OpenGL, hardware HEVC, and display sleep/wake on Tiger Lake and Alder Lake-N.
+Hardware H.264 encode/decode has also been tested on Tiger Lake. Validation is
+limited to specific systems; USB-C/Thunderbolt display paths, three simultaneous
+displays, internal panels and system sleep are not established as supported
+configurations. Higher resolutions and other connector layouts require separate
+validation.
+
+## Required components
+
+| Component | Role |
+| --- | --- |
+| Lilu | Runtime required by WhateverXe |
+| `WhateverXe.kext` (`org.b00t0x.WhateverXe`) | Graphics compatibility plugin, loaded through OpenCore after Lilu |
+| `AppleIntelTGLCompat.kext` (`org.b00t0x.AppleIntelTGLCompat`) | Companion for the matching Apple drivers, included in the patched System kernel collection |
+| Matching Apple graphics root payload | Kernel and userland drivers required for display and acceleration |
+
+Apple driver binaries are not included in this source repository. A complete
+root-patch installation and its kernel-collection setup are required separately;
+this repository does not provide a general-purpose installer.
+
+Use compatible versions of WhateverXe and AppleIntelTGLCompat. The current
+WhateverXe 0.2.x line uses AppleIntelTGLCompat 0.5.0. Do not mix it with the older
+0.4.x provider. Retain a complete working EFI/root configuration for recovery.
+Disabling WhateverXe alone while its Apple drivers remain active can prevent
+startup.
+
+WhateverGreen and WhateverXe must not be enabled together. Co-installation,
+including mixed-GPU configurations, is not supported.
+
+## Configuration
+
+GPU selection is automatic from the PCI device ID. AppleIntelTGLCompat has no
+boot arguments. A `device-id` override is an advanced backend selector, not a
+way to supply missing hardware capabilities.
+
+Connector routing is read from firmware VBT where the current backend can
+interpret it. Supported fixed HDMI and fixed DisplayPort layouts do not normally
+need manual wiring properties. Automatic detection does not add USB-C, dock or
+other unsupported transports. On Tiger Lake systems without an internal display,
+use `-wex-nopanel`.
+
+- [Boot arguments and migration](docs/boot-arguments.md)
+- [Device selection and DeviceProperties](docs/device-selection.md)
 
 ## Build and test
 
-Provide `MacKernelSDK/` and `Lilu.kext/Contents/Resources/{Headers,Library}` locally, or pass `--sdk` and `--lilu` explicitly. No WEG source or binary is needed.
+Use macOS with Xcode command-line tools, Python 3.9 or newer, MacKernelSDK and
+Lilu's development headers/library. Place `MacKernelSDK/` and `Lilu.kext/` in the
+repository root, or pass their paths with `--sdk` and `--lilu`.
 
 ```sh
-python3 tools/build.py
-python3 tools/test.py --donor /path/to/AppleIntelTGLGraphicsFramebuffer --accelerator /path/to/AppleIntelTGLGraphics
-python3 tools/stage_root.py --baseline /path/to/qualified-root --build build --output /path/to/new-root
+python3 tools/build.py --release
+python3 tools/test.py
 ```
 
-The optional test donor must be the exact c004fc1a framebuffer. Build outputs include both kexts and a source/header manifest. `stage_root.py` validates the predecessor manifest, preserves Apple executables, and updates the framebuffer provider dependency. Rebuild the target System KC after migrating the provider identity.
+The build produces both kexts and a source manifest in `build/`. CPU tests do not
+establish compatibility with a physical GPU. Optional donor replay tests accept
+`--donor /path/to/AppleIntelTGLGraphicsFramebuffer` and
+`--accelerator /path/to/AppleIntelTGLGraphics`; they require the exact driver
+binaries accepted by the respective tests. WhateverGreen source is not a build
+dependency.
 
-The historical `TGLCPUMemoryProbe` and `TGLLinkProbe` kexts are diagnostic tools, not runtime dependencies of WhateverXe. The normal root payload excludes both. When migrating an older installation, remove separately installed probe bundles and exclude their identifiers from the rebuilt KC; removing files alone does not remove cached kexts. Verify normal driver loading after removal, since TGLLinkProbe previously triggered dependency loading. MI646 removal results and recovery assets are recorded in the enclosing project's Xe records; other machines require their own validation.
+## License and credits
 
-All WhateverXe-owned boot switches use `wex`: plugin controls are `-wexoff`, `-wexdbg`, and `-wexbeta`; `-wex-nopanel` controls omission of the TGL internal panel. The admitted Alder-N/Twin Lake backend automatically enables its framebuffer, native accelerator and normal RCS profile; their former three opt-in arguments are removed. Old names and N97 aliases are no longer accepted. Family selection now uses the device table/DeviceProperties without `-wex-adln` or `-wex-tgl`. See [the complete option and migration guide](docs/boot-arguments.md) before upgrading both kexts and the boot configuration. WEG-shared `-igfxdvmt`/`gfxrst=` and native Apple donor options retain their names. Physical PCI/revision and exact kernel/donor checks remain authoritative.
-
-Disable the Xe development WEG when enabling WhateverXe. This revision has no qualified WEG co-installation mode, including mixed-GPU configurations. Its boot framebuffer hook is global. Do not enable both and rely on load order.
-
-## Extraction validation
-
-Initial CPU qualification: 50 suites passed, including Display13 resource/power/IRQ/WM/cursor, Alder-N GT, shared profile/provider binding, DVMT calculations, TGL wiring/training leases and exact donor TC replay. This does not qualify new hardware or a physical third output. Machine-specific runtime results are maintained in the enclosing project's Xe records.
-
-Historical scripts requiring private evidence or old WEG git revisions remain in the predecessor repository. The DKL regression counterexample is retained as a small licensed fixture. This repository does not require access to that old git history for its normal test command.
-
-The same r8 binary (`ab33128`) and provider0.4.0 passed T8 Pro/N95 (16 EU)
-normal startup, dual FHD60/30-bit output, Metal, GL core/legacy, hardware HEVC,
-and one display sleep/wake on 2026-10-09. T8's Combo A/B and DDC1/2 were selected
-from VBT BDB249 with both HDMI wiring properties absent. No board-specific code
-was added. A subsequent physical unplug/replug of Combo B and then A, once each
-with the peer connected, preserved the peer display and restored both outputs
-and Metal without GPU/resource/power faults. This does not qualify all-output
-disconnect, repeated hotplug, H.264, system sleep or the third TC HDMI port;
-that historical run retained the old boot-argument aliases.
-
-The current WEX 0.2.1/provider 0.5.0 pair subsequently passed device-ID automatic
-selection and the new boot arguments on both T8 (46D2/rev0) and MI646
-(9A49/rev1), with no device-id override or wiring properties. Dual FHD60/30-bit
-output, Metal/OpenGL, hardware HEVC and display sleep/wake passed on both;
-MI646 also passed hardware H.264 encode/decode. The operator subsequently
-confirmed individual connector unplug/replug on both machines; those later
-checks did not capture internal hotplug transitions. See
-[device selection](docs/device-selection.md) for the scope and override tests.
-
-## Firmware connector defaults
-
-On admitted Tiger Lake and Alder Lake-N hardware, WhateverXe reads the ACPI
-OpRegion VBT before selecting framebuffer hooks. OpRegion 2.0 absolute and 2.x
-relative external VBT addresses, plus the embedded VBT, are supported. The bounded
-parser currently accepts BDB versions 216–256. Missing, malformed or unsupported
-firmware never supplies guessed wiring; existing explicit properties remain usable.
-
-An unambiguous fixed TMDS entry for physical Combo A/B can supply the HDMI DDI
-and DDC pin without a wiring property. TGL uses `tgl-hdmi-wiring`; Alder-N uses
-`xelp-hdmi-wiring` with the existing TGL alias. Present properties override firmware,
-and malformed overrides are rejected. Firmware facts do not expand the qualified
-transport mask. DP++, LSPCON, USB-C/TBT, lane reversal, dock routing and inverted
-HPD entries do not become automatic fixed HDMI. The VBT DVO label alone does not
-select DP versus HDMI: some firmware names HDMI ports DP-A/DP-B.
-
-`WhateverXeFirmwarePorts` on IGPU contains twelve little-endian words: schema(1),
-parser status (1=valid), source (1=embedded, 2=external), BDB version, physical DDI
-mask, unmapped-entry count, non-fixed-TMDS mask, automatic-HDMI validity, HDMI mask,
-and DDC pins A/B/C. `WhateverXeFirmwarePortRecords` retains nine records of six
-words: device type, original DVO, DDC, AUX, VBT byte23 flags, and byte33 capabilities.
-USB-C/TBT capability is not the current link mode.
-
-Without `tgl-tc-wiring`, TGL external DP entries with matching DDI/AUX routing
-can become probe candidates. The automatic backend currently admits TC1/TC2:
-the native mode transaction now maps qualified modular FIA coordinates for
-TC1–TC4, but this does not extend physical-port admission. Reversed lanes, inverted HPD, dock/LSPCON,
-shared or remapped AUX and internal panels are excluded. Explicit properties,
-including invalid ones, override automatic discovery.
-
-The provider still checks live HPD/FIA and only a successful mode4 probe registers
-the port for existing fixed-DP PHY/AUX fixes. Registration persists through
-disconnect to keep power gets/puts symmetric; it is neither connection state nor
-a power reference. Automatic ports reject mode2/3 (TBT/DP-alt). Diagnostics on
-the registry root are `WhateverXeTCDPCandidates` and `WhateverXeTCDPRegistered`
-(physical-DDI bitmasks). No CPU-to-board lookup is involved. `-wex-nopanel` remains
-available. ROM scanning, automatic panel setup, DP++ protocol fallback and new
-Type-C transports are not implemented by this change.
-
-## Native FIA adapter and diagnostics
-
-The exact-donor mode0/4 transaction uses the TGL port coordinate model for its
-FIA ready/ownership accesses. A successful provider mode4 probe, the existing mode
-mutex, the current thread/port and five matched native call sites are required.
-TC1/TC2 retain the original MMIO/AUX sequence. TC3/TC4 bank/bit mapping and sibling
-bit preservation are CPU-tested, not live-qualified. TC5/TC6, unavailable-register
-handling, TC-cold boot handoff and repeated mode4 AUX acquisition remain separate
-work; this adapter does not provide a full mode lifetime implementation.
-
-`WhateverXeNativeFiaReady` reports routing qualification. `WhateverXeNativeFiaAccess`
-is six u32 values: schema1, physical DDI, FIA instance, bit mask, cumulative reads,
-and writes. Counts record adapter accesses, not hardware acknowledgement.
-Activation/path/engine observers now record software state without implicit
-fixed-port MMIO. DPCD records are 80 bytes: ns/thread u64 followed by sixteen u32;
-word12 is physical DDI, word13 is schema1. The new `WhateverXeDPCD*` properties
-replace `TGLDPCD4*`. Optimal-lane records include DDI at qword11.
-The obsolete `-tglcrc`, `-tglholdfirstd3`, and `-tglcursorpte` experiments were
-removed; these switches no longer perform register/AUX/PTE writes.
-
-
-`WhateverXeTCControl3` through `WhateverXeTCControl8` are live, memory-only
-snapshots: four u32 words (schema1, physical DDI, all-event count, control count),
-then 64 ring slots of the existing 128-byte MEM1 AUX record. Timestamp and sequence
-identify valid records; event7 is provider entry/return, event8 mode-lock wait/
-acquisition, event9 parent-PG get return/put entry. Event1 and events5/6 retain mode
-and AUX boundaries. These snapshots do not require EDID-time publication and
-contain no register reads. Reading them does not establish hardware liveness.
-
-The provider probe currently assumes powered FIA access; registration does not
-prove TC-cold protection. The optional whole-boot `-wex-tc-bootstrap` experiment
-is not a production lifetime fix. It did not prevent the observed MI646 reconnect
-hang after successful mode0-to-4 and subsequent AUX calls in r7. The subsequent
-observer fix below passed one MI646 physical reconnect cycle with normal boot
-arguments; this does not qualify other ports, boards or full TC power lifetime.
-
-
-Scanout and HDCP protocol observers are now memory-only as well. Their callbacks
-include pre-allocation/post-disable boundaries with no display/GT power lease.
-`TGLScan*` retains its 256-qword layout with MEM1 at qword255; old MMIO/GGTT value
-slots are unsampled. `TGLHDCP1*` uses qword11=MEM1 and qword10=0 (unsampled).
-TC control event10 brackets port training, event11 brackets LightUpDP. Native
-training, mode, power, scanout and HDCP operations remain unchanged.
-
-On 2026-10-09, r8 (`ab33128`) passed one MI646 fixed-DP unplug/replug cycle
-while HDMI remained connected: mode4 -> 0 -> 4, training and LightUpDP returned
-success, both FHD60/30-bit desktops returned, and post-reconnect Metal passed
-three rounds with no GPU reset/recovery. AUX and additional parent references
-returned from 1 to 0 to 1; native PG3 references returned to the baseline of 4.
-The bounded live ring missed some intermediate records, so this establishes
-endpoint balance, not a complete per-call lifetime proof. The removed unowned
-observer reads were independently reproduced with a PROT_NONE CPU test, but the
-specific register responsible for the earlier hardware hang is not established.
-USB-C, other routes, repeated hotplug and long-term stability remain unqualified.
-
-## Counted forcewake and interrupt reentry
-
-WEX 0.2.2 protects the exact donor's regular `SafeForceWake` entry for both
-qualified TGL and Alder-N paths. The native multithreaded, non-skip, nonzero-domain
-operation runs with local interrupts masked, restoring the caller's prior state.
-All regular callers, including telemetry interrupted by GPU submission, share
-this protection. Native locks, refcounts, client1 and ACK transactions remain;
-the uncounted interrupt client is not a replacement. Provider/ABI and boot options
-are unchanged. This restores protection missing on TGL since the historical r386
-withdrawal; it does not claim to resolve the separate intermittent boot issue.
-
-`WhateverXeForceWakeIRQProtected` reports route qualification.
-`WhateverXeForceWakeIRQ` is ten u64 words: schema1, protected calls, already-masked
-entries, returns, maximum native interval in ns, intervals >=100us, >=1ms,
-bypasses, total native ns, and intervals >=10ms. Reads are memory-only. The time
-excludes some wrapper overhead and is not an exact total interrupt-off duration;
-concurrent sampling can temporarily observe different call/return counts.
-`N97ForceWakeIRQProtected` remains available on Alder-N for existing collectors.
-The CPU replay executes the real wrapper and exact donor with injected IRQ,
-including a failing unprotected control, reference nesting and prior-state cases.
-Live qualification of this revision is recorded separately from those CPU tests.
+WhateverXe retains WhateverGreen's copyright notices and BSD-3-Clause license.
+See [LICENSE.txt](LICENSE.txt). The historical [extraction map](docs/extraction-map.json)
+records its source origins. Lilu and MacKernelSDK are separate dependencies.
+Device-name reference data was provided by b00t0x.
