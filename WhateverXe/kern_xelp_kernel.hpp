@@ -34,5 +34,8 @@ inline bool display13Kernel(Kernel k) {return k == Kernel::BigSur20G1443 || k ==
 inline bool recoveryKernel(Kernel k) {return k == Kernel::BigSur20G1443 || k == Kernel::Tahoe25G241;}
 // IODTPlatformExpert::writeNVRAMProperty at vtable +0x9E8 (donor calls +0x9F8).
 inline bool nvramSlotKernel(Kernel k) {return k == Kernel::BigSur20G1443 || k == Kernel::Tahoe25G241;}
+// AppleIntelTGLCompat provider start: the donor framebuffer resolves these
+// symbols on every kernel a donor path is admitted on, including 20A2314a.
+inline bool providerKernel(Kernel k) {return k == Kernel::BigSur20A2314a || k == Kernel::BigSur20G1443 || k == Kernel::Tahoe25G241;}
 }
 #endif

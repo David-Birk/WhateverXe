@@ -117,6 +117,7 @@ int main() {
  version="Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64";
  xe=XE{};xe.init();xe.selectProfile(XELP::identify(0x46A88086,0x0C));
  assert(xe.adlnRequested && xe.adlnKernelReady && xe.adlnNativeRequested && xe.display13FramebufferRequested);
+ assert(tglStart(nullptr,nullptr)==KERN_SUCCESS); // provider starts on 25G241
  assert(xe.currentGraphics==&kextIntelTGL && xe.currentFramebuffer==&kextIntelTGLFb);
  xe=XE{};xe.init();xe.selectProfile(XELP::identify(0x46A88086,0));assert(!xe.adlnRequested);
  xe=XE{};xe.init();xe.selectProfile(XELP::identify(0x9A498086,0));assert(!xe.tglRequested);

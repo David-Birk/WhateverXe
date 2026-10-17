@@ -16,6 +16,9 @@ int main() {
  // 20A2314a is the donor's own kernel; no Display13 or ported fix admits it.
  assert(!display13Kernel(Kernel::BigSur20A2314a) && !recoveryKernel(Kernel::BigSur20A2314a));
  assert(!nvramSlotKernel(Kernel::BigSur20A2314a));
+ // The provider also serves the donor's own kernel.
+ for(auto k:{Kernel::BigSur20A2314a,Kernel::BigSur20G1443,Kernel::Tahoe25G241})assert(providerKernel(k));
+ assert(!providerKernel(Kernel::Unknown));
  for(auto k:{Kernel::BigSur20G1443,Kernel::Tahoe25G241})
   assert(display13Kernel(k) && recoveryKernel(k) && nvramSlotKernel(k));
  assert(!display13Kernel(Kernel::Unknown) && !recoveryKernel(Kernel::Unknown) && !nvramSlotKernel(Kernel::Unknown));
