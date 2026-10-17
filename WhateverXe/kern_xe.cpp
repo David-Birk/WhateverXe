@@ -8,6 +8,7 @@
 //
 
 #include "kern_xe.hpp"
+#include "kern_xelp_kernel.hpp"
 #include "kern_alderlake_n.hpp"
 #include "kern_xelp_device.hpp"
 #include "kern_xelp_memory_layout.hpp"
@@ -2597,7 +2598,7 @@ void XE::selectProfile(const XELP::Profile &profile) {
     adlnDetected=adlnRequested;
     modDVMTCalcFix.available=profile.admitted();
     if(adlnRequested) {
-        adlnKernelReady=!strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64");
+        adlnKernelReady=XELP::display13Kernel(XELP::kernelIdentity(version));
         adlnNativeRequested=adlnKernelReady;
         display13FramebufferRequested=adlnKernelReady;
         adlnNativeRCSProfileRequested=adlnNativeRequested && !checkKernelArgument("-wex-adln-kernel-ctx");
@@ -8471,7 +8472,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// performs context replay. Port that CALLER contract only. No changed
 			// completion values, queue drops, hardware reset or panic entry points.
 			const bool recoveryRequested=checkKernelArgument("-disablegfxfirmware") &&
-				!strcmp(version,"Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64");
+				XELP::recoveryKernel(XELP::kernelIdentity(version));
 			bool recoveryOK=!recoveryRequested;
 			if (recoveryRequested) {
 				const char *recovery="__ZN18IGAccelFIFOChannel22resetHardwareAndReplayEv";
@@ -8564,9 +8565,10 @@ bool XE::processKextFull(KernelPatcher &patcher, size_t index, mach_vm_address_t
 			tglConnectionLock = IOSimpleLockAlloc();
 			// r99: 20G1443 moved IODTPlatformExpert::writeNVRAMProperty by
 			// two slots when IOPlatformExpert's target/product names moved
-			// into reserved slots. Keep the native call and its ownership.
+			// into reserved slots (25G241 keeps it at +0x9E8). Keep the
+			// native call and its ownership.
 			tglPlatformNVRAMReady = true;
-			if (!strcmp(version, "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64")) {
+			if (XELP::nvramSlotKernel(XELP::kernelIdentity(version))) {
 				tglPlatformNVRAMReady = false;
 				auto table = patcher.solveSymbol(KernelPatcher::KernelID, "__ZTV18IODTPlatformExpert");
 				auto target = patcher.solveSymbol(KernelPatcher::KernelID,

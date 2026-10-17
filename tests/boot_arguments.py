@@ -41,6 +41,7 @@ fixture = r'''
 #include <string>
 #include <initializer_list>
 #include "kern_xelp_platform.hpp"
+#include "kern_xelp_kernel.hpp"
 static const char *qualified = "Darwin Kernel Version 20.6.0: Thu Jul  6 22:12:47 PDT 2023; root:xnu-7195.141.49.702.12~1/RELEASE_X86_64";
 static const char *version = qualified;
 static std::set<std::string> args;
@@ -112,6 +113,13 @@ int main() {
  assert(!adlnNativeRCSProfileRequested);
  assert(tglStart(nullptr,nullptr)==KERN_FAILURE);
  xe=XE{};xe.selectProfile(XELP::identify(0x9A498086,0));assert(!xe.tglRequested);
+ // Tahoe 25G241 admits the Display13 path for ADL-P C0/D0 only; TGL stays Big Sur-only.
+ version="Darwin Kernel Version 25.6.0: Tue Aug 18 17:46:40 PDT 2026; root:xnu-12377.161.15.700.19~2/RELEASE_X86_64";
+ xe=XE{};xe.init();xe.selectProfile(XELP::identify(0x46A88086,0x0C));
+ assert(xe.adlnRequested && xe.adlnKernelReady && xe.adlnNativeRequested && xe.display13FramebufferRequested);
+ assert(xe.currentGraphics==&kextIntelTGL && xe.currentFramebuffer==&kextIntelTGLFb);
+ xe=XE{};xe.init();xe.selectProfile(XELP::identify(0x46A88086,0));assert(!xe.adlnRequested);
+ xe=XE{};xe.init();xe.selectProfile(XELP::identify(0x9A498086,0));assert(!xe.tglRequested);
 
 }
 '''.replace('// ACTUAL_SOURCE', init + entry)
