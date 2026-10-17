@@ -22,12 +22,12 @@ constexpr uint32_t DisplayStep = 3;  // D0 in the ADL-N revision table.
 // Linux v6.12 INTEL_ADLN_IDS includes Twin Lake 46D3/46D4. Do not infer
 // EU count from these IDs, and do not admit other ADL-P devices here.
 inline bool family(uint32_t identity) {
-    return XELP::identify(identity,0).family==XELP::Family::AlderLakeN;
+    return XELP::display13Family(XELP::identify(identity,0).family);
 }
 inline bool matches(uint32_t identity, uint8_t revision) {
     // adlp_n_revids has only revision0. Unknown steppings need their own WA review.
     const auto p=XELP::identify(identity,revision);
-    return p.family==XELP::Family::AlderLakeN && p.admitted();
+    return XELP::display13Family(p.family) && p.admitted();
 }
 
 struct Resources {
@@ -38,8 +38,20 @@ struct Resources {
 // bit per EU pair. Native subslices are twice the DSS population. Preserve
 // the physical LP backend; capacity is independent of the PCI product label.
 // Four L3 banks/256KiB is the supported small-GT capacity, not eus*constant.
+// ADL-P GT2 is TGL GT2 silicon: one slice, five or six DSS with all 16 EU,
+// eight L3 banks (TGL PRM Vol4). The donor's native GT2 topology applies.
+inline bool resourcesGT2(uint32_t slice, uint32_t dss, uint32_t euDisable,
+                         uint32_t l3Disable, Resources &out) {
+    out = {};
+    if (slice != 1 || !dss || (dss&~0x3FU) || euDisable || l3Disable) return false;
+    const auto count=static_cast<uint32_t>(__builtin_popcount(dss));
+    if (count<5) return false;
+    out = {1, count, 2*count, 16*count, 8, 512};
+    return true;
+}
 inline bool resources(uint32_t slice, uint32_t dss, uint32_t euDisable,
-                      uint32_t l3Disable, Resources &out) {
+                      uint32_t l3Disable, Resources &out, XELP::GT gt=XELP::GT::ADLNSmall) {
+    if (gt==XELP::GT::ADLPGT2) return resourcesGT2(slice,dss,euDisable,l3Disable,out);
     out = {};
     if (slice != 1 || !dss || (dss&~0x3FU) || (euDisable&~0xFFU) || l3Disable != 0xF0)
         return false;
@@ -49,6 +61,11 @@ inline bool resources(uint32_t slice, uint32_t dss, uint32_t euDisable,
     out = {1, count, 2*count, eus, 4, 256};
     return true;
 }
+
+// GEN11_GT_VEBOX_VDBOX_DISABLE: ADL-N keeps VCS0/VECS0; ADL-P GT2 keeps
+// VCS0/VCS2/VECS0 (Linux adl_p engine mask). Unverified on ADL-P hardware;
+// a mismatch fails closed and the fuses are published for review.
+constexpr uint32_t vdboxVebox(XELP::GT gt) {return gt==XELP::GT::ADLPGT2 ? 0x000E00FA : 0x000E00FE;}
 
 struct Register { uint32_t offset {}, value {}; };
 enum class GTStatus : uint32_t {
@@ -68,7 +85,8 @@ static_assert(sizeof(GTReadout)==60*4,"AlderLakeN GT readout layout");
 
 // Linux v6.12 gen12 forcewake domains: fuses and BCS are GT, RCS is render.
 // Only acquire an unowned kernel bit0. Never reset domains or alter engines.
-template<class IO> GTReadout readGT(IO &io, bool admitted, uint32_t *edram=nullptr) {
+template<class IO> GTReadout readGT(IO &io, bool admitted, uint32_t *edram=nullptr,
+                                    XELP::GT gt=XELP::GT::ADLNSmall) {
     GTReadout out;
     if(!admitted)return out;
     constexpr uint32_t request[] {0xA188,0xA278},ack[] {0x130044,0xD84};
@@ -108,8 +126,8 @@ template<class IO> GTReadout readGT(IO &io, bool admitted, uint32_t *edram=nullp
             if(out.fuses[i]==UINT32_MAX)out.status=GTStatus::Unavailable;
         }
         if(out.status==GTStatus::Complete &&
-           (!resources(out.fuses[0],out.fuses[1],out.fuses[2],out.fuses[3],out.resources) ||
-            out.fuses[4]!=0x000E00FE))out.status=GTStatus::ProfileMismatch;
+           (!resources(out.fuses[0],out.fuses[1],out.fuses[2],out.fuses[3],out.resources,gt) ||
+            out.fuses[4]!=vdboxVebox(gt)))out.status=GTStatus::ProfileMismatch;
         if(edram) {
             *edram=io.readable(0x120010) ? io.read(0x120010) : UINT32_MAX;
             if(*edram==UINT32_MAX)out.status=GTStatus::Unavailable;

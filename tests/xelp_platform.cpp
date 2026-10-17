@@ -12,10 +12,10 @@ struct IO {
  uint32_t read(uint32_t r){reads.push_back(r);return regs.at(r);}
 };
 int main() {
- for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,255U}) {
+ for(uint32_t id=0;id<65536;++id)for(unsigned rev:{0U,1U,0x0CU,255U}) {
   const auto p=identify((id<<16)|0x8086,rev);
-  const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78,adln=id>=0x46D0 && id<=0x46D4;
-  assert(p.admitted()==(tgl || (adln && rev==0)));
+  const bool tgl=id==0x9A40 || id==0x9A49 || id==0x9A78,adln=id>=0x46D0 && id<=0x46D4,adlp=id==0x46A8;
+  assert(p.admitted()==(tgl || (adln && rev==0) || (adlp && rev==0x0C)));
   assert(!adln || p.display==Display::XeLPD);
   assert(!identify((id<<16)|0x1234,rev).admitted());
  }

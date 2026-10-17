@@ -67,7 +67,7 @@ static bool xelpSelectedDevice(IOPCIDevice *pci) {
         XELP::same(xelpSelectedProfile,XELP::deviceProfile(pci));
 }
 static bool xelpAlderLakeNDevice(IOPCIDevice *pci) {
-    return xelpSelectedProfile.family==XELP::Family::AlderLakeN && xelpSelectedDevice(pci);
+    return XELP::display13Family(xelpSelectedProfile.family) && xelpSelectedDevice(pci);
 }
 // Detailed read-only display evidence is opt-in; control and first-fault
 // receipts remain active in the ordinary AlderLakeN profile.
@@ -2590,8 +2590,10 @@ void XE::init() {
 void XE::selectProfile(const XELP::Profile &profile) {
     xeProfile=profile;
     adlnNativeRCSProfileRequested=false;
-    adlnRequested=profile.admitted() && profile.family==XELP::Family::AlderLakeN &&
-        profile.display==XELP::Display::XeLPD && profile.gt==XELP::GT::ADLNSmall;
+    // ADL-P reuses the ADL-N display13 path with the donor's native GT2 topology.
+    adlnRequested=profile.admitted() && profile.display==XELP::Display::XeLPD &&
+        ((profile.family==XELP::Family::AlderLakeN && profile.gt==XELP::GT::ADLNSmall) ||
+         (profile.family==XELP::Family::AlderLakeP && profile.gt==XELP::GT::ADLPGT2));
     adlnDetected=adlnRequested;
     modDVMTCalcFix.available=profile.admitted();
     if(adlnRequested) {
@@ -2649,7 +2651,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	uint64_t connector[] {1,adlnNativeRequested,wiring!=nullptr,board.valid,board.hdmi,bootDDI};
 	pci->setProperty("N97NativeBootConnector",connector,sizeof(connector));
 	pci->setProperty("N97DisplayVersion", AlderLakeN::DisplayVersion, 32);
-	pci->setProperty("N97GTStep", "A0");
+	pci->setProperty("N97GTStep", xeProfile.family==XELP::Family::AlderLakeP ? "C0" : "A0");
 	pci->setProperty("N97DisplayStep", "D0");
 	pci->setProperty("N97GGC", pci->configRead16(0x50), 32);
 	if (!(pci->configRead16(4) & 2)) return;
@@ -2807,7 +2809,7 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 	if (gtTest) {
 		uint32_t edram=UINT32_MAX;
 		auto gt=AlderLakeN::readGT(io,barReady && xelpMemoryMatches(pci),
-			adlnNativeRequested ? &edram : nullptr);
+			adlnNativeRequested ? &edram : nullptr,xeProfile.gt);
 		if (adlnNativeRequested) {
             adlnNativeSubslices=gt.resources.nativeSubslices; adlnL3Banks=gt.resources.l3Banks; adlnNativeEUs=gt.resources.eus;
 			AlderLakeN::LinearPlan plan;
@@ -7923,6 +7925,7 @@ bool XE::processTGLAccelerator(KernelPatcher &patcher, size_t index, mach_vm_add
 			// ADL-N/Twin Lake keep LP silicon selector2. Validate the actual
 			// native subslice count and publish the separately admitted L3 capacity.
 			uint8_t urbReplaceAlderLakeN[] {0x83,0xFE,0x01,0x75,0x59,0x83,0xFA,0x04,0x75,0x54,0x41,0xC7,0x87,0x64,0x11,0x00,0x00,0x04,0x00,0x00,0x00};
+			// ADL-P GT2 is the 80/96-EU TGL GT2 case and keeps urbReplace.
 			if (adlnDetected) { urbReplaceAlderLakeN[7]=adlnNativeSubslices;urbReplaceAlderLakeN[17]=adlnL3Banks; }
 			const auto urbReplacement = xeProfile.gt==XELP::GT::ADLNSmall ? urbReplaceAlderLakeN :
 				(xeProfile.gt==XELP::GT::TGLG4 ? urbReplaceG4 : urbReplace);

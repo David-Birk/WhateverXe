@@ -16,8 +16,12 @@ struct Profile {
     bool overridden() const {return identity!=effectiveIdentity;}
     bool admitted() const {return (identity&0xFFFF)==0x8086 && revision<=255 &&
         donor==Donor::C004FC1A && gt!=GT::Unknown &&
-        (family!=Family::AlderLakeN || revision==0);}
+        (family!=Family::AlderLakeN || revision==0) &&
+        // adlp_revids 0x0C is GT C0 / display D0, the only reviewed ADL-P stepping.
+        (family!=Family::AlderLakeP || revision==0x0C);}
 };
+// ADL-N is a Linux subplatform of ADL-P: both use xe_lpd Combo A/B + TC1..4.
+constexpr bool display13Family(Family f) {return f==Family::AlderLakeN || f==Family::AlderLakeP;}
 inline Profile identify(uint32_t physical,uint32_t revision,uint32_t effective) {
     Profile p;p.identity=physical;p.revision=revision;p.effectiveIdentity=effective;
     if((physical&0xFFFF)!=0x8086 || revision>255)return p;

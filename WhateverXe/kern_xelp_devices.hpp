@@ -8,7 +8,7 @@
 namespace XELP {
 enum class Family : uint32_t { Unknown, TigerLake, AlderLakeN, RocketLake, AlderLakeS, AlderLakeP, RaptorLakeS, RaptorLakeP };
 enum class Display : uint32_t { Unknown, XeD = 12, XeLPD = 13 };
-enum class GT : uint32_t { Unknown, TGLGT2, TGLG4, ADLNSmall };
+enum class GT : uint32_t { Unknown, TGLGT2, TGLG4, ADLNSmall, ADLPGT2 };
 enum class Donor : uint32_t { Unknown, C004FC1A = 1 };
 struct DeviceEntry {
     uint16_t device; Family family; Display display; GT backend;
@@ -25,7 +25,8 @@ constexpr DeviceEntry DeviceTable[] {
     {0x4693, Family::AlderLakeS, Display::XeD, GT::Unknown, "Intel UHD Graphics 710"},
     {0x46A3, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel UHD Graphics"},
     {0x46A6, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
-    {0x46A8, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
+    // 46A8 (ThinkPad T14 Gen 3, 80 EU) is the only ADL-P ID with a backend so far.
+    {0x46A8, Family::AlderLakeP, Display::XeLPD, GT::ADLPGT2, "Intel Iris Xe Graphics"},
     {0x46AA, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel Iris Xe Graphics"},
     {0x46B3, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel UHD Graphics"},
     {0x46C3, Family::AlderLakeP, Display::XeLPD, GT::Unknown, "Intel UHD Graphics"},
